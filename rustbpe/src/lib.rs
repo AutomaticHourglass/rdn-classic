@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 use std::collections::HashMap as StdHashMap;
+use std::sync::OnceLock;
 
 use dary_heap::OctonaryHeap;
 use pyo3::prelude::*;
@@ -23,6 +24,31 @@ const DELIMITERS: [&str; 7] = ["\n", "\t", "=", ":", ".", ",", " "];
 // const DELIM_IDS: [&u32; 7] = [&10, &9, &61, &58, &46, &44, &32];
 /// Open / close pairs that the tokenizer treats as a single token pair.
 const PAIRS: &[(&str, &str)] = &[("(", ")"), ("[", "]"), ("{", "}")];
+
+/// Static lazy-initialized hashmaps for paired delimiter matching.
+/// Built once on first access, avoiding repeated allocation in tokenize_with_stack().
+static OPENER_TO_CLOSER: OnceLock<StdHashMap<char, char>> = OnceLock::new();
+static CLOSER_TO_OPENER: OnceLock<StdHashMap<char, char>> = OnceLock::new();
+
+/// Helper to initialize OPENER_TO_CLOSER
+fn get_opener_to_closer() -> &'static StdHashMap<char, char> {
+    OPENER_TO_CLOSER.get_or_init(|| {
+        PAIRS
+            .iter()
+            .map(|&(o, c)| (o.chars().next().unwrap(), c.chars().next().unwrap()))
+            .collect()
+    })
+}
+
+/// Helper to initialize CLOSER_TO_OPENER
+fn get_closer_to_opener() -> &'static StdHashMap<char, char> {
+    CLOSER_TO_OPENER.get_or_init(|| {
+        PAIRS
+            .iter()
+            .map(|&(o, c)| (c.chars().next().unwrap(), o.chars().next().unwrap()))
+            .collect()
+    })
+}
 
 const DOWN_ID: u32 = 256;
 const UP_ID: u32 = 257;
@@ -492,19 +518,14 @@ impl Tokenizer {
             return out;
         }
 
-        // 2️⃣ Build maps for paired delimiters.
-        let opener_to_closer: StdHashMap<char, char> = PAIRS
-            .iter()
-            .map(|&(o, c)| (o.chars().next().unwrap(), c.chars().next().unwrap()))
-            .collect();
-        let closer_to_opener: StdHashMap<char, char> = PAIRS
-            .iter()
-            .map(|&(o, c)| (c.chars().next().unwrap(), o.chars().next().unwrap()))
-            .collect();
+        // 2️⃣ Use static maps for paired delimiters (no allocation needed).
+        // These are lazily initialized once on first use.
+        let opener_to_closer = get_opener_to_closer();
+        let closer_to_opener = get_closer_to_opener();
 
         // 3️⃣ Scan the string.
         let mut stack: Vec<char> = Vec::new(); // currently open delimiters
-        let mut buf: String = String::new(); // current “word”
+        let mut buf: String = String::new(); // current "word"
 
         for ch in text.chars() {
             if opener_to_closer.contains_key(&ch) {

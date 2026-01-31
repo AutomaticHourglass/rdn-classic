@@ -37,7 +37,7 @@ from rdn.gpt import GPT, GPTConfig
 from rdn.dataloader import get_dataloader
 from rdn.tokenizer import get_tokenizer
 from rdn.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, \
-    autodetect_device_type
+    autodetect_device_type, get_peak_flops
 from rdn.tokenizer import get_tokenizer, get_token_bytes
 from rdn.checkpoint_manager import save_checkpoint, load_checkpoint
 from rdn.loss_eval import evaluate_bpb
@@ -117,6 +117,14 @@ autocast_ctx = torch.amp.autocast(device_type=device_type,
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
+# GPU hardware diagnostics
+if device_type == "cuda":
+    gpu_device_name = torch.cuda.get_device_name(0)
+    gpu_peak_flops = get_peak_flops(gpu_device_name)
+    print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+else:
+    gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
+
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer(not args.gpt)
 if args.gpt:
@@ -154,6 +162,8 @@ if args.n_kv_heads > 0:
 print0(f"num_layers: {num_layers}")
 print0(f"model_dim: {model_dim}")
 print0(f"num_heads: {num_heads}")
+head_dim = model_dim // num_heads
+print0(f"head_dim: {head_dim}")
 print0(f"num_kv_heads: {num_kv_heads}")
 print0(f"num_streams: {args.n_streams}")
 # print0(f"n_experts: {args.n_experts}")
@@ -244,8 +254,14 @@ if resuming:
 
 orig_model = model  # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 # model = torch.compile(model, dynamic=True) # the inputs to model will never change shape so dynamic=False is safe
-num_params = sum(p.numel() for p in model.parameters())
-print0(f"Number of parameters: {num_params:,}")
+
+# Detailed parameter counts
+param_counts = orig_model.num_scaling_params()
+print0(f"Parameter counts:")
+for key, value in param_counts.items():
+    print0(f"  {key:24s}: {value:,}")
+num_params = param_counts['total']
+
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
@@ -415,7 +431,7 @@ while True:
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with autocast_ctx:
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -621,8 +637,7 @@ while True:
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(args.total_batch_size / dt)
     flops_per_sec = num_flops_per_token * args.total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size  # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100  # in %
+    mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)  # Hardware-aware MFU
     if step > 1:
         total_training_time += dt  # only count the time after the first 10 steps
     # Calculate ETA based on average time per step (excluding first 10 steps)
@@ -656,7 +671,7 @@ while True:
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time / 60:.2f}m")
 if val_bpb is not None:
-    print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
+    print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # Log to report
 from rdn.report import get_report

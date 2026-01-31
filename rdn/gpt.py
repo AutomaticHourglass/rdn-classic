@@ -912,6 +912,43 @@ class GPT(nn.Module):
 
         return num_flops_per_token
 
+    def num_scaling_params(self):
+        """
+        Return detailed parameter counts for scaling law analysis.
+        Different papers use different conventions:
+        - Kaplan et al. excluded embedding parameters
+        - Chinchilla included all parameters
+        Ref: https://arxiv.org/abs/2203.15556 (Chinchilla paper)
+        Ref: https://arxiv.org/abs/2001.08361 (Kaplan et al. original scaling laws paper)
+
+        Returns a dict with counts for each parameter group, so downstream analysis
+        can experiment with which combination gives the cleanest scaling laws.
+        """
+        # Count each group separately (mirrors the grouping in setup_optimizer)
+        wte = sum(p.numel() for p in self.transformer.wte.parameters())
+        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
+        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+
+        # Add coordinate embeddings if enabled
+        coord_embeds = 0
+        if self.coord_embeddings is not None:
+            coord_embeds = sum(p.numel() for p in self.coord_embeddings.parameters())
+            coord_embeds += sum(p.numel() for p in self.coord_proj.parameters())
+
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars + coord_embeds
+        assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        return {
+            'wte': wte,
+            'value_embeds': value_embeds,
+            'lm_head': lm_head,
+            'transformer_matrices': transformer_matrices,
+            'scalars': scalars,
+            'coord_embeds': coord_embeds,
+            'total': total,
+        }
+
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95)):
         """
         New unified optimizer setup using MuonAdamW/DistMuonAdamW from rdn/optim.py.

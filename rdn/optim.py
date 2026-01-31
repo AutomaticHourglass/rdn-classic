@@ -17,7 +17,8 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=True)
+# NOTE: torch.compile disabled for now due to issues with mixed 1D/2D parameter shapes
+# @torch.compile(dynamic=True)
 def adamw_step_fused(
     p: Tensor,              # (32768, 768) or (n_layer,) - parameter tensor (2D or 1D)
     grad: Tensor,           # (32768, 768) or (n_layer,) - gradient, same shape as p

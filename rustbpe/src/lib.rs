@@ -363,9 +363,16 @@ impl Tokenizer {
     }
 
     /// Encode a *single* word using the already‑trained BPE merges.
+    /// Optimized to avoid O(n) remove() operations by building a new vector.
     fn encode_word(&self, word: &str) -> Vec<u32> {
         let mut ids: Vec<u32> = word.bytes().map(|b| b as u32).collect();
-        while ids.len() >= 2 {
+
+        loop {
+            if ids.len() < 2 {
+                break;
+            }
+
+            // Find the best (lowest ID) merge pair
             let mut best_pair: Option<(usize, Pair, u32)> = None;
             for i in 0..ids.len() - 1 {
                 let pair: Pair = (ids[i], ids[i + 1]);
@@ -375,13 +382,27 @@ impl Tokenizer {
                     }
                 }
             }
-            if let Some((idx, _pair, new_id)) = best_pair {
-                ids[idx] = new_id;
-                ids.remove(idx + 1);
-            } else {
+
+            // If no merge found, we're done
+            let Some((merge_idx, _pair, new_id)) = best_pair else {
                 break;
+            };
+
+            // Build new vector with the merge applied (avoids O(n) shift from remove())
+            let mut new_ids = Vec::with_capacity(ids.len() - 1);
+            let mut i = 0;
+            while i < ids.len() {
+                if i == merge_idx {
+                    new_ids.push(new_id);
+                    i += 2; // skip both tokens of the pair
+                } else {
+                    new_ids.push(ids[i]);
+                    i += 1;
+                }
             }
+            ids = new_ids;
         }
+
         ids
     }
 

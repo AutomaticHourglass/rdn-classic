@@ -235,7 +235,7 @@ class RustBPETokenizer:
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
-            ids = [self.enc.encode(json.dumps(tt)) for t in text for tt in t]
+            ids = [self.enc.encode(t) for t in text]
             if prepend is not None:
                 for ids_row in ids:
                     ids_row.insert(0, prepend_id) # TODO: same

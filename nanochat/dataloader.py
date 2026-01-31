@@ -68,6 +68,9 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
                 e_texts = [b['prompt'] for b in batch]
                 d_texts = [b['json'] for b in batch]
 
+                e_texts = [str(e) if isinstance(e, dict) else e for e in e_texts]
+                d_texts = [str(d) if isinstance(d, dict) else d for d in d_texts]
+
                 yield e_texts, d_texts
         else:
             # Parquet-based mode (normal pretraining on text)
@@ -93,8 +96,8 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
 
             if use_generator:
                 # Generator mode: tokenize prompts and responses separately
-                e_lists = tokenizer.encode([e_batch], prepend=bos_token, num_threads=tokenizer_threads)
-                d_lists = tokenizer.encode([d_batch], num_threads=tokenizer_threads)
+                e_lists = tokenizer.encode(e_batch, prepend=bos_token, num_threads=tokenizer_threads)
+                d_lists = tokenizer.encode(d_batch, num_threads=tokenizer_threads)
                 for d_tokens, e_tokens in zip(d_lists, e_lists):
                     t_buffer.extend(e_tokens)
                     t_buffer.extend(d_tokens)

@@ -34,7 +34,7 @@ class GPTConfig:
     n_head: int = 6  # number of query heads
     n_kv_head: int = 6  # number of key/value heads (GQA)
     n_embd: int = 768
-    n_dimensions: int = 32           # Number of recursive tokenization levels
+    n_dimensions: int = 8           # Number of recursive tokenization levels
     page_size: int = 8192
     n_streams: int = 4
     # MoE Specifics

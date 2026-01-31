@@ -36,17 +36,25 @@ def adamw_step_fused(
     All in one compiled graph to eliminate Python overhead between ops.
     The 0-D CPU tensors avoid recompilation when hyperparameter values change.
     """
+    # Extract scalar values to avoid device mismatch (since compile is disabled)
+    step = step_t.item()
+    lr = lr_t.item()
+    beta1 = beta1_t.item()
+    beta2 = beta2_t.item()
+    eps = eps_t.item()
+    wd = wd_t.item()
+
     # Weight decay (decoupled, applied before the update)
-    p.mul_(1 - lr_t * wd_t)
+    p.mul_(1 - lr * wd)
     # Update running averages (lerp_ is cleaner and fuses well)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    exp_avg.lerp_(grad, 1 - beta1)
+    exp_avg_sq.lerp_(grad.square(), 1 - beta2)
     # Bias corrections
-    bias1 = 1 - beta1_t ** step_t
-    bias2 = 1 - beta2_t ** step_t
+    bias1 = 1 - beta1 ** step
+    bias2 = 1 - beta2 ** step
     # Compute update and apply
-    denom = (exp_avg_sq / bias2).sqrt() + eps_t
-    step_size = lr_t / bias1
+    denom = (exp_avg_sq / bias2).sqrt() + eps
+    step_size = lr / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
 # -----------------------------------------------------------------------------

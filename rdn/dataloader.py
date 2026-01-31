@@ -128,3 +128,94 @@ def tokenizing_distributed_data_loader(*args, **kwargs):
     # helper function that only emits the inputs/targets and not the state_dict
     for inputs, targets in tokenizing_distributed_data_loader_with_state(*args, **kwargs):
         yield inputs, targets
+
+
+def get_dataloader(
+    tokenizer, B, T, split,
+    device="cuda",
+    resume_state_dict=None,
+    use_bos_aligned=True,
+    use_coordinates=True,
+    n_coord_dim=8,
+    bracket_pairs=None,
+    prefetch=True,
+    prefetch_count=3,
+    use_generator=False,
+    use_recursive_markers=True,
+    **kwargs
+):
+    """
+    Get RDN dataloader with optional GPU-accelerated coordinates.
+
+    Args:
+        tokenizer: RustBPETokenizer instance
+        B: Batch size
+        T: Sequence length
+        split: "train" or "val"
+        device: Device to place tensors on
+        resume_state_dict: Optional state for resuming
+        use_bos_aligned: Use BOS-aligned best-fit packing (default: True)
+        use_coordinates: Use hierarchical coordinates calculated on GPU (default: True)
+        n_coord_dim: Number of coordinate dimensions (default: 8)
+        bracket_pairs: List of (open, close) token ID tuples for hierarchy
+        prefetch: Use background prefetching to avoid GPU starvation (default: True)
+        prefetch_count: Number of batches to prefetch (default: 3)
+        use_generator: Use calculator/tictactoe generator (default: False)
+        use_recursive_markers: Use recursive tokenization markers (default: True)
+        **kwargs: Additional arguments passed to dataloader
+
+    Returns:
+        Dataloader iterator yielding:
+        - If use_coordinates=True: (inputs, targets, coords_inputs, coords_targets, state_dict)
+        - If use_coordinates=False: (inputs, targets, state_dict)
+        - If use_generator=True: coordinates not supported yet, yields (inputs, targets)
+
+    Note: Coordinates are calculated on GPU using torch.compile for maximum performance.
+    """
+    from rdn.prefetch_dataloader import PrefetchDataLoader
+
+    if use_coordinates and not use_generator:
+        # Use hierarchical dataloader with GPU coordinates
+        from rdn.hierarchical_dataloader import (
+            tokenizing_distributed_data_loader_with_coords_bos_bestfit,
+            tokenizing_distributed_data_loader_with_coords
+        )
+
+        # Pass coordinate parameters to dataloader
+        coord_kwargs = {
+            'n_coord_dim': n_coord_dim,
+            'bracket_pairs': bracket_pairs,
+            **kwargs
+        }
+
+        if use_bos_aligned:
+            loader = tokenizing_distributed_data_loader_with_coords_bos_bestfit(
+                tokenizer, B, T, split,
+                device=device,
+                resume_state_dict=resume_state_dict,
+                **coord_kwargs
+            )
+        else:
+            loader = tokenizing_distributed_data_loader_with_coords(
+                tokenizer, B, T, split,
+                device=device,
+                resume_state_dict=resume_state_dict,
+                **coord_kwargs
+            )
+    else:
+        # Use simple dataloader without coordinates (or with generator)
+        # Generator mode doesn't support coordinates yet
+        loader = tokenizing_distributed_data_loader_with_state(
+            B, T, split,
+            device=device,
+            resume_state_dict=resume_state_dict,
+            use_generator=use_generator,
+            use_recursive_markers=use_recursive_markers,
+            **kwargs
+        )
+
+    # Wrap with prefetching to avoid GPU starvation
+    if prefetch and not use_generator:
+        loader = PrefetchDataLoader(loader, prefetch_count=prefetch_count)
+
+    return loader

@@ -32,10 +32,17 @@ class GPTConfig:
     n_head: int = 6  # number of query heads
     n_kv_head: int = 6  # number of key/value heads (GQA)
     n_embd: int = 768
-    n_dimensions: int = 8           # Number of recursive tokenization levels
+    n_dimensions: int = 8           # Number of recursive tokenization levels (legacy name, same as n_coord_dim)
     page_size: int = 8192
     n_streams: int = 4
     use_coordinate_embeddings: bool = True  # False for standard GPT (RoPE only), True for RDN coordinate embeddings
+    # Phase 5: Sliding window attention pattern string, tiled across layers. Final layer always L.
+    # Characters: L=long (full context), S=short (half context)
+    # Examples: "L"=all full context, "SL"=alternating, "SSSL"=two short then one long
+    window_pattern: str = "SSSL"
+    # Phase 5: Coordinate embedding dimensions (for hierarchical tokenization)
+    n_coord_dim: int = 8  # Number of coordinate dimensions
+    coord_embd_dim: int = 64  # Embedding dimension per coordinate
     # MoE Specifics
     moe_enabled: bool = False
     n_routed_experts: int = 8      # Total number of selectable experts
@@ -47,6 +54,11 @@ class GPTConfig:
 def norm(x):
     # Purely functional rmsnorm with no learnable params
     return F.rms_norm(x, (x.size(-1),))
+
+
+def has_ve(layer_idx, n_layer):
+    """Returns True if GPT layer should have Value Embedding (alternating, last layer always included)."""
+    return layer_idx % 2 == (n_layer - 1) % 2
 
 
 def apply_rotary_emb(x, cos, sin):
@@ -96,14 +108,23 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        # Phase 5: Value embedding gate (ResFormer) for layers that have value embeddings
+        self.ve_gate_channels = 32
+        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, cos_sin, kv_cache):
+    def forward(self, x, cos_sin, kv_cache, ve=None, window_size=None):
         B, T, _ = x.size()
 
         # Project the input to get queries, keys, and values
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+
+        # Phase 5: Value residual (ResFormer): mix in value embedding with input-dependent gate per head
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 2)
+            v = v + gate.unsqueeze(-1) * ve
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
@@ -314,7 +335,9 @@ class MHCBlock(nn.Module):
     def _step(self, X_chunk: torch.Tensor,
               cos_chunk: torch.Tensor,
               sin_chunk: torch.Tensor,
-              kv_cache):
+              kv_cache,
+              ve_chunk=None,
+              window_size=None):
         B, T, M, C = X_chunk.shape
         assert M == self.n_streams
 
@@ -325,7 +348,7 @@ class MHCBlock(nn.Module):
         # 2. Standard attention + MoE
         # Note: Using self.norm1/2 explicitly instead of global norm()
         x_norm   = norm(x_layer)
-        attn_out = self.attn(x_norm, (cos_chunk, sin_chunk), kv_cache)
+        attn_out = self.attn(x_norm, (cos_chunk, sin_chunk), kv_cache, ve=ve_chunk, window_size=window_size)
 
         x_norm2  = norm(x_layer + attn_out)
 
@@ -359,14 +382,17 @@ class MHCBlock(nn.Module):
                        cos_chunk: torch.Tensor,
                        sin_chunk: torch.Tensor,
                        kv_cache,
-                       page_size):
+                       page_size,
+                       ve=None,
+                       window_size=None):
         out_chunks = []
         for i in range(0, X.size(1), page_size):
             start, end = i, min(i + page_size, X.size(1))
             X_chunk   = X[:, start:end, :, :]
             cos_c     = cos_chunk[:, start:end, ...]
             sin_c     = sin_chunk[:, start:end, ...]
-            out_chunks.append(self.compiled_step(X_chunk, cos_c, sin_c, kv_cache))
+            ve_c      = ve[:, start:end, :] if ve is not None else None
+            out_chunks.append(self.compiled_step(X_chunk, cos_c, sin_c, kv_cache, ve_c, window_size))
         return torch.cat(out_chunks, dim=1)
 
     # ------------------------------------------------------------------
@@ -376,28 +402,30 @@ class MHCBlock(nn.Module):
                 cos_sin: tuple[torch.Tensor, torch.Tensor],
                 kv_cache,
                 page_size=None,
-                use_checkpointing=True):
+                use_checkpointing=True,
+                ve=None,
+                window_size=None):
         cos_chunk, sin_chunk = cos_sin
 
         if page_size is None or X.size(1) <= page_size:
             # Process the whole sequence in one go
             if use_checkpointing:
                 return torch.utils.checkpoint.checkpoint(
-                    self._step, X, cos_chunk, sin_chunk, kv_cache, use_reentrant=False
+                    self._step, X, cos_chunk, sin_chunk, kv_cache, ve, window_size, use_reentrant=False
                 )
             else:
-                return self.compiled_step(X, cos_chunk, sin_chunk, kv_cache)
+                return self.compiled_step(X, cos_chunk, sin_chunk, kv_cache, ve, window_size)
 
         # Paged processing
         if use_checkpointing:
             return torch.utils.checkpoint.checkpoint(
                 self._paged_forward,
-                X, cos_chunk, sin_chunk, kv_cache, page_size, use_reentrant=False
+                X, cos_chunk, sin_chunk, kv_cache, page_size, ve, window_size, use_reentrant=False
             )
         else:
             return self._paged_forward(X,
                                        cos_chunk, sin_chunk,
-                                       kv_cache, page_size)
+                                       kv_cache, page_size, ve, window_size)
 
 
 
@@ -412,12 +440,12 @@ class Block(nn.Module):
         # This makes the re-computation during backward very fast.
         self.compiled_step = torch.compile(self._step, mode="default")
 
-    def _step(self, x_chunk, cos_chunk, sin_chunk, kv_cache):
+    def _step(self, x_chunk, cos_chunk, sin_chunk, kv_cache, ve_chunk=None, window_size=None):
         """
         The heavy computation for a single page.
         """
         # Attention
-        attn_out = self.attn(norm(x_chunk), (cos_chunk, sin_chunk), kv_cache)
+        attn_out = self.attn(norm(x_chunk), (cos_chunk, sin_chunk), kv_cache, ve=ve_chunk, window_size=window_size)
         x_chunk = x_chunk + attn_out
 
         # MLP
@@ -425,7 +453,7 @@ class Block(nn.Module):
         x_chunk = x_chunk + mlp_out
         return x_chunk
 
-    def _paged_forward(self, x, cos, sin, kv_cache, page_size):
+    def _paged_forward(self, x, cos, sin, kv_cache, page_size, ve=None, window_size=None):
         """
         The logic that iterates over pages.
         We separate this so we can wrap it (or parts of it) if needed,
@@ -441,24 +469,25 @@ class Block(nn.Module):
             x_chunk = x[:, start:end, :]
             cos_chunk = cos[:, start:end, ...]
             sin_chunk = sin[:, start:end, ...]
+            ve_chunk = ve[:, start:end, :] if ve is not None else None
 
             # Run the compiled step
-            out_chunk = self.compiled_step(x_chunk, cos_chunk, sin_chunk, kv_cache)
+            out_chunk = self.compiled_step(x_chunk, cos_chunk, sin_chunk, kv_cache, ve_chunk, window_size)
             out_chunks.append(out_chunk)
 
         return torch.cat(out_chunks, dim=1)
 
     @torch.compiler.disable
-    def forward(self, x, cos_sin, kv_cache, page_size=None, use_checkpointing=True):
+    def forward(self, x, cos_sin, kv_cache, page_size=None, use_checkpointing=True, ve=None, window_size=None):
         # 1. Standard Path (Fastest for Inference/Small Models)
         if page_size is None or x.size(1) <= page_size:
             if use_checkpointing:
                 # Checkpoint the whole block as one unit
                 return checkpoint(
-                    self._step, x, cos_sin[0], cos_sin[1], kv_cache, use_reentrant=False
+                    self._step, x, cos_sin[0], cos_sin[1], kv_cache, ve, window_size, use_reentrant=False
                 )
             else:
-                return self.compiled_step(x, cos_sin[0], cos_sin[1], kv_cache)
+                return self.compiled_step(x, cos_sin[0], cos_sin[1], kv_cache, ve, window_size)
 
         # 2. Paged Path (Low Memory)
         # If we want to save memory during BACKWARD, we must checkpoint
@@ -474,11 +503,13 @@ class Block(nn.Module):
                 cos_sin[1],
                 kv_cache,
                 page_size,
+                ve,
+                window_size,
                 use_reentrant=False,
             )
 
         # OPTION B: No checkpointing, just paging (Low Inference Memory, High Training Memory)
-        return self._paged_forward(x, cos_sin[0], cos_sin[1], kv_cache, page_size)
+        return self._paged_forward(x, cos_sin[0], cos_sin[1], kv_cache, page_size, ve, window_size)
 
 
 import torch
@@ -655,6 +686,9 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
 
+        # Phase 5: Compute per-layer window sizes for sliding window attention
+        self.window_sizes = self._compute_window_sizes(config)
+
         # Build transformer components
         transformer_dict = {
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
@@ -673,6 +707,21 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(transformer_dict)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # Phase 5: Per-layer learnable scalars (inspired by modded-nanogpt)
+        # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
+        # x0_lambdas: blends initial embedding back in at each layer (init 0.1 = small skip connection)
+        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
+        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
+
+        # Phase 5: Value embeddings (ResFormer-style): alternating layers, last layer always included
+        head_dim = config.n_embd // config.n_head
+        kv_dim = config.n_kv_head * head_dim
+        self.value_embeds = nn.ModuleDict({
+            str(i): nn.Embedding(config.vocab_size, kv_dim)
+            for i in range(config.n_layer) if has_ve(i, config.n_layer)
+        })
+
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
@@ -703,6 +752,20 @@ class GPT(nn.Module):
             #     torch.nn.init.zeros_(expert.w1.weight)
             #     torch.nn.init.zeros_(expert.w2.weight)
             #     torch.nn.init.zeros_(expert.w3.weight)
+
+        # Phase 5: Initialize per-layer scalars
+        self.resid_lambdas.data.fill_(1.0)   # 1.0 => typical residual connections at init
+        self.x0_lambdas.data.fill_(0.1)      # 0.1 => small initial weight for skip connection to input embedding
+
+        # Phase 5: Initialize value embeddings (init like embeddings)
+        for ve in self.value_embeds.values():
+            torch.nn.init.normal_(ve.weight, mean=0.0, std=1.0)
+
+        # Phase 5: Initialize ve_gate weights to zero so gates start at sigmoid(0) = 0.5, scaled by 2 -> 1.0 (neutral)
+        for block in self.transformer.h:
+            if block.attn.ve_gate is not None:
+                torch.nn.init.zeros_(block.attn.ve_gate.weight)
+
         # init the rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -733,6 +796,35 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
 
     # TODO: bump base theta more, e.g. 100K is more common more recently
+    def _compute_window_sizes(self, config):
+        """
+        Phase 5: Compute per-layer window sizes for sliding window attention.
+
+        Returns list of (left, right) tuples for attention window_size parameter:
+        - left: how many tokens before current position to attend to (-1 = unlimited)
+        - right: how many tokens after current position to attend to (0 for causal)
+
+        Pattern string is tiled across layers. Final layer always gets L (full context).
+        Characters: L=long (full context), S=short (half context)
+        """
+        pattern = config.window_pattern.upper()
+        assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}. Use only S and L."
+        # Map characters to window sizes
+        long_window = config.sequence_len
+        short_window = long_window // 2
+        char_to_window = {
+            "L": (long_window, 0),
+            "S": (short_window, 0),
+        }
+        # Tile pattern across layers
+        window_sizes = []
+        for layer_idx in range(config.n_layer):
+            char = pattern[layer_idx % len(pattern)]
+            window_sizes.append(char_to_window[char])
+        # Final layer always gets full context
+        window_sizes[-1] = (long_window, 0)
+        return window_sizes
+
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         # autodetect the device from model embeddings
         if device is None:
@@ -843,12 +935,20 @@ class GPT(nn.Module):
             embedding_params += list(self.transformer.wpe.gate.parameters()) + list(self.transformer.wpe.proj.parameters())
         lm_head_params = list(self.lm_head.parameters())
 
+        # Phase 5: Value embeddings (ResFormer)
+        value_embeds_params = list(self.value_embeds.parameters())
+
+        # Phase 5: Per-layer scalars
+        resid_params = [self.resid_lambdas]
+        x0_params = [self.x0_lambdas]
+
         # For MoE models, expert embeddings are part of the transformer
         expert_params = []
         if hasattr(self.transformer, 'expert_embeddings'):
             expert_params = list(self.transformer.expert_embeddings.parameters())
 
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(expert_params)
+        assert len(list(self.parameters())) == (len(matrix_params) + len(embedding_params) + len(lm_head_params) +
+                                                 len(value_embeds_params) + len(resid_params) + len(x0_params) + len(expert_params))
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -856,9 +956,12 @@ class GPT(nn.Module):
 
         # Build param_groups with all required fields explicit
         param_groups = [
-            # AdamW groups (embeddings, lm_head)
+            # AdamW groups (embeddings, lm_head, value embeddings, scalars)
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=resid_params, lr=0.01 * 0.5, betas=adam_betas, eps=1e-10, weight_decay=0.0),  # scalar_lr * 0.01
+            dict(kind='adamw', params=x0_params, lr=0.01 * 0.5, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
         ]
 
         # Add expert embeddings if present (treated like embeddings)
@@ -946,16 +1049,31 @@ class GPT(nn.Module):
         # Standard GPT mode (--gpt flag): no explicit positional embeddings (RoPE in attention is sufficient)
 
         x = norm(x)
+        # Phase 5: Save x0 for skip connections
+        x0 = x  # save initial normalized embedding for x0 residual
         # ------------------------------------------------------------------
         # 2. Expand into M streams before the block loop
         # ------------------------------------------------------------------
         if self.config.n_streams > 1:
             X = x.unsqueeze(2).expand(-1, -1, self.config.n_streams, -1)  # (B,T,M,C)
+            x0_expanded = x0.unsqueeze(2).expand(-1, -1, self.config.n_streams, -1)  # (B,T,M,C)
         else:
             X = x
+            x0_expanded = x0
 
-        for block in self.transformer.h:
-            X = block(X, cos_sin, kv_cache)
+        # Phase 5: Apply per-layer scalars and pass value embeddings
+        for i, block in enumerate(self.transformer.h):
+            # Apply resid_lambdas and x0_lambdas scaling
+            if self.config.n_streams > 1:
+                X = self.resid_lambdas[i] * X + self.x0_lambdas[i] * x0_expanded
+            else:
+                X = self.resid_lambdas[i] * X + self.x0_lambdas[i] * x0_expanded
+            # Get value embedding for this layer if it has one
+            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            # Get window size for this layer
+            window_size = self.window_sizes[i]
+            # Forward through block
+            X = block(X, cos_sin, kv_cache, ve=ve, window_size=window_size)
 
         # ------------------------------------------------------------------
         # 3. Collapse streams (average) – the LM head expects a single residual

@@ -32,7 +32,7 @@ build-backend = "maturin"
 module-name = "rdt"
 bindings = "pyo3"
 python-source = "."
-manifest-path = "rustbpe/Cargo.toml"
+manifest-path = "rdt/Cargo.toml"
 
 [dependency-groups]
 dev = [

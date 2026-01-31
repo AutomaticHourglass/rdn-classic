@@ -931,13 +931,12 @@ class GPT(nn.Module):
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
 
-        # Add coordinate embeddings if enabled
-        coord_embeds = 0
-        if self.config.use_coordinate_embeddings and hasattr(self, 'coord_embeddings'):
-            coord_embeds = sum(p.numel() for p in self.coord_embeddings.parameters())
-            coord_embeds += sum(p.numel() for p in self.coord_proj.parameters())
+        # Add coordinate embeddings if enabled (stored as transformer.wpe)
+        wpe = 0
+        if self.config.use_coordinate_embeddings and 'wpe' in self.transformer:
+            wpe = sum(p.numel() for p in self.transformer.wpe.parameters())
 
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars + coord_embeds
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars + wpe
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
@@ -945,7 +944,7 @@ class GPT(nn.Module):
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
             'scalars': scalars,
-            'coord_embeds': coord_embeds,
+            'wpe': wpe,
             'total': total,
         }
 

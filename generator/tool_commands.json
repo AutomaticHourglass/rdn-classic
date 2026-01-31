@@ -1,0 +1,266 @@
+{
+  "read_file": {
+    "description": "Read a file",
+    "command_template": "cat {path}"
+  },
+  "write_file": {
+    "description": "Write content to a file (overwrites)",
+    "command_template": "printf '%s' {content} > {path}"
+  },
+  "create_file": {
+    "description": "Create an empty file",
+    "command_template": "touch {path}"
+  },
+  "delete_file": {
+    "description": "Delete a file",
+    "command_template": "rm -f {path}"
+  },
+  "rename_file": {
+    "description": "Rename or move a file",
+    "command_template": "mv {src} {dst}"
+  },
+  "copy_file": {
+    "description": "Copy a file",
+    "command_template": "cp {src} {dst}"
+  },
+  "move_file": {
+    "description": "Move a file (same as rename)",
+    "command_template": "mv {src} {dst}"
+  },
+  "create_directory": {
+    "description": "Create directory",
+    "command_template": "mkdir {path}"
+  },
+  "list_directory": {
+    "description": "List directory entries",
+    "command_template": "ls -1 {path}"
+  },
+    "list_dir": {
+    "description": "List directory entries",
+    "command_template": "ls"
+  },
+  "get_file_metadata": {
+    "description": "Get file size and modification time",
+    "command_template": "stat -c '%s %y' {path}"
+  },
+  "set_permissions": {
+    "description": "Set file permissions",
+    "command_template": "chmod {mode} {path}"
+  },
+  "create_symlink": {
+    "description": "Create a symbolic link",
+    "command_template": "ln -s {src} {dst}"
+  },
+  "apply_patch": {
+    "description": "Apply a unified diff to a file",
+    "command_template": "printf '%s' \\\"{diff_text}\\\" | patch -p1 {target}"
+  },
+  "diff_files": {
+    "description": "Generate unified diff between two files",
+    "command_template": "diff -u {path1} {path2}"
+  },
+  "run_python_file": {
+    "description": "Execute a Python script",
+    "command_template": "python {path}"
+  },
+  "evaluate_python_code": {
+    "description": "Execute a snippet of Python code",
+    "command_template": "python -c \\\"{code}\\\""
+  },
+  "run_rust_program": {
+    "description": "Run a Rust binary (Cargo project)",
+    "command_template": "cargo run --manifest-path {path}/Cargo.toml"
+  },
+  "compile_and_run_rust_code": {
+    "description": "Compile and run Rust code from a string",
+    "command_template": "rustc -o {output_bin} <(printf '%s' \\\"{code}\\\") && ./{output_bin}"
+  },
+  "run_shell_command": {
+    "description": "Execute an arbitrary shell command",
+    "command_template": "bash -c \\\"{cmd}\\\""
+  },
+  "pip_install": {
+    "description": "Install a Python package",
+    "command_template": "pip install {package}"
+  },
+  "pip_uninstall": {
+    "description": "Uninstall a Python package",
+    "command_template": "pip uninstall -y {package}"
+  },
+  "cargo_add_dependency": {
+    "description": "Add a dependency to Cargo.toml (requires cargo‑edit)",
+    "command_template": "cargo add {crate}"
+  },
+  "cargo_remove_dependency": {
+    "description": "Remove a dependency from Cargo.toml (requires cargo‑edit)",
+    "command_template": "cargo rm {crate}"
+  },
+  "npm_install": {
+    "description": "Install an NPM package",
+    "command_template": "npm install {package}"
+  },
+  "make": {
+    "description": "Run make with optional target",
+    "command_template": "make {target}"
+  },
+  "cmake": {
+    "description": "Configure and build with CMake",
+    "command_template": "mkdir -p {build_dir} && cd {build_dir} && cmake .. && make"
+  },
+  "cargo_test": {
+    "description": "Run Rust tests",
+    "command_template": "cargo test"
+  },
+  "pytest": {
+    "description": "Run Pytest with optional arguments",
+    "command_template": "pytest {run_args}"
+  },
+  "run_linter": {
+    "description": "Run a linter (example: flake8 or black)",
+    "command_template": "{linter} {path}"
+  },
+  "run_clippy": {
+    "description": "Run Clippy on a Rust crate",
+    "command_template": "cargo clippy --manifest-path {path}/Cargo.toml"
+  },
+  "run_mypy": {
+    "description": "Run Mypy on a Python project",
+    "command_template": "mypy {path}"
+  },
+  "git_init": {
+    "description": "Initialize a Git repository",
+    "command_template": "git init"
+  },
+  "git_clone": {
+    "description": "Clone a Git repository",
+    "command_template": "git clone {url} {dest_dir}"
+  },
+  "git_pull": {
+    "description": "Pull latest changes in a repository",
+    "command_template": "cd {repo_dir} && git pull"
+  },
+  "git_add": {
+    "description": "Add files to git",
+    "command_template": "git add {files}"
+  },
+  "git_commit": {
+    "description": "Commit added files with message",
+    "command_template": "git commit -m \\\"{message}\\\""
+  },
+  "git_push": {
+    "description": "Push commits to remote",
+    "command_template": "cd {repo_dir} && git push"
+  },
+  "git_status": {
+    "description": "Show repository status",
+    "command_template": "cd {repo_dir} && git status"
+  },
+  "create_git_branch": {
+    "description": "Create a new branch",
+    "command_template": "git branch {name} {start_point}"
+  },
+  "checkout_git_branch": {
+    "description": "Checkout a branch",
+    "command_template": "cd {repo_dir} && git checkout {branch_name}"
+  },
+  "get_env_var": {
+    "description": "Get an environment variable",
+    "command_template": "printenv {name}"
+  },
+  "set_env_var": {
+    "description": "Set an environment variable (session only)",
+    "command_template": "export {name}={value}"
+  },
+  "get_os_info": {
+    "description": "Get OS information",
+    "command_template": "uname -a"
+  },
+  "restart_system": {
+    "description": "Restart the system",
+    "command_template": "sudo reboot"
+  },
+  "shutdown_system": {
+    "description": "Shutdown the system",
+    "command_template": "sudo shutdown -h now"
+  },
+  "grep": {
+    "description": "Search for a pattern in a file",
+    "command_template": "grep {pattern} {path}"
+  },
+  "find_files_by_pattern": {
+    "description": "Find files matching a pattern",
+    "command_template": "find {directory} -name '{pattern}'"
+  },
+  "run_black": {
+    "description": "Format Python code with Black",
+    "command_template": "black {path}"
+  },
+  "rustfmt": {
+    "description": "Format Rust code with rustfmt",
+    "command_template": "rustfmt {file_path}"
+  },
+  "sphinx_build": {
+    "description": "Build Sphinx documentation",
+    "command_template": "sphinx-build {src_dir} {build_dir}"
+  },
+  "read_csv": {
+    "description": "Read a CSV file into JSON",
+    "command_template": "python -c \\\"import pandas as pd, sys; print(pd.read_csv('{path')).to_json()\\\""
+  },
+  "write_csv": {
+    "description": "Write JSON data to a CSV file",
+    "command_template": "python -c \\\"import pandas as pd, sys; pd.read_json(sys.stdin).to_csv('{path}', index=False)\\\" <<< \\\"{data}\\\""
+  },
+  "read_json": {
+    "description": "Read a JSON file",
+    "command_template": "python -c \\\"import json, sys; print(json.load(open('{path}')))\\\""
+  },
+  "write_json": {
+    "description": "Write data to a JSON file",
+    "command_template": "python -c \\\"import json, sys; json.dump(sys.stdin, open('{path}', 'w'))\\\" <<< \\\"{obj}\\\""
+  },
+  "curl": {
+    "description": "Download content with curl",
+    "command_template": "curl -L {url} > {output}"
+  },
+  "wget": {
+    "description": "Download content with wget",
+    "command_template": "wget -O {output} {url}"
+  },
+  "docker_build": {
+    "description": "Build a Docker image",
+    "command_template": "docker build -t {image_name} {context_dir}"
+  },
+  "docker_run": {
+    "description": "Run a Docker container",
+    "command_template": "docker run {args} {image_name}"
+  },
+  "create_virtualenv": {
+    "description": "Create a Python virtual environment",
+    "command_template": "python -m venv {env_dir} python@3.12 && {env_dir}/bin/pip install numpy scipy matplotlib pandas"
+  },
+  "activate_virtualenv": {
+    "description": "Activate a virtual environment (session only)",
+    "command_template": "source {env_dir}/bin/activate"
+  },
+  "write_log": {
+    "description": "Append a message to a log file",
+    "command_template": "echo \\\"{message}\\\" >> {file_path}"
+  },
+  "get_process_list": {
+    "description": "List running processes",
+    "command_template": "ps aux"
+  },
+  "kill_process": {
+    "description": "Kill a process by PID",
+    "command_template": "kill {pid}"
+  },
+  "open_file_in_editor": {
+    "description": "Open a file in the default editor",
+    "command_template": "xdg-open {path}"
+  },
+  "apply_diff_to_repo": {
+    "description": "Apply a diff to the current Git repository",
+    "command_template": "printf '%s' {diff_text} | git apply"
+  }
+}

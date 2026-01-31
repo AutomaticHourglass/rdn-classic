@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Rust
+rustbpe/target/
+Cargo.lock
+
+# Project specific
+wandb/
+logs/
+flops_hist/
+generator/calc/
+generator/saved_puzzles/
+base_checkpoints/
+mid_checkpoints/
+chatsft_checkpoints/
+chatrl_checkpoints/
+report.md
+
+# Data and cache
+.cache/
+*.parquet
+data/
+
+# Temporary files
+untitled.py
+Untitled*.ipynb
+tmp/
+temp/

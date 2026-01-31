@@ -32,7 +32,7 @@ class GPTConfig:
     n_head: int = 6  # number of query heads
     n_kv_head: int = 6  # number of key/value heads (GQA)
     n_embd: int = 768
-    n_dimensions: int = 8           # Number of recursive tokenization levels (legacy name, same as n_coord_dim)
+    n_dimensions: int = 8           # Number of recursive tokenization levels / coordinate dimensions
     page_size: int = 8192
     n_streams: int = 4
     use_coordinate_embeddings: bool = True  # False for standard GPT (RoPE only), True for RDN coordinate embeddings
@@ -40,9 +40,6 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSSL"=two short then one long
     window_pattern: str = "SSSL"
-    # Phase 5: Coordinate embedding dimensions (for hierarchical tokenization)
-    n_coord_dim: int = 8  # Number of coordinate dimensions
-    coord_embd_dim: int = 64  # Embedding dimension per coordinate
     # MoE Specifics
     moe_enabled: bool = False
     n_routed_experts: int = 8      # Total number of selectable experts

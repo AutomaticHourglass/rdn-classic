@@ -3,7 +3,7 @@ from collections import deque
 import torch
 import pyarrow.parquet as pq
 
-from generator.generator_calc import generate_random_problem
+from generator.unified import generate_random_problem
 from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files, parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
@@ -28,7 +28,7 @@ def list_splits() -> list[str]:
     return list(DS.keys())
 
 
-def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None):
+def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None, use_generator=True):
     """
     Stream pretraining text from parquet files, tokenize, yield training batches.
 
@@ -52,33 +52,29 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
             resume_state_dict: dict | None = None,
     ):
         ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-        # dataset = DS[split]
-        # total_rows = len(dataset)
-        # start_idx = resume_state_dict["idx"] if resume_state_dict else 0
-        # first_pass = True
 
-        while True:  # Infinite epoch loop
-            # CORRECT LOGIC: Calculate only the indices for THIS batch
-            # We want 'batch_size' items for this rank, spread out by world_size
-            batch_indices = []
+        if use_generator:
+            # Generator-based mode (calculator/tictactoe agents)
+            while True:  # Infinite epoch loop
+                batch_indices = []
+                for i in range(batch_size):
+                    global_pos = ddp_rank + (i * ddp_world_size)
+                    batch_indices.append(global_pos)
 
-            # We need to grab (batch_size * world_size) global rows to get
-            # batch_size rows for this specific rank.
-            # The indices for this rank are at strides of ddp_world_size.
-            for i in range(batch_size):
-                global_pos = ddp_rank + (i * ddp_world_size)
-                batch_indices.append(global_pos)
+                if not batch_indices:
+                    break
 
-            if not batch_indices:
-                # End of dataset for this rank
-                break
+                batch = [generate_random_problem() for _ in batch_indices]
+                e_texts = [b['prompt'] for b in batch]
+                d_texts = [b['json'] for b in batch]
 
-            batch = [generate_random_problem() for _ in batch_indices]
-            e_texts = [b['prompt'] for b in batch]
-            d_texts = [b['json'] for b in batch]
-
-            # Yield the data and the state (using the start of the block as the key)
-            yield e_texts, d_texts
+                yield e_texts, d_texts
+        else:
+            # Parquet-based mode (normal pretraining on text)
+            for batch_texts in parquets_iter_batched(split, start=ddp_rank, step=ddp_world_size):
+                # For text pretraining, we just have one stream of text (no prompt/response split)
+                # So we return empty e_texts and put everything in d_texts
+                yield [], batch_texts
 
     batches = document_batches(split)
 
@@ -94,14 +90,19 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
         # Accumulate enough tokens for one iteration before yielding.
         while len(t_buffer) < needed_tokens:
             e_batch, d_batch = next(batches)
-            e_lists = tokenizer.encode([e_batch], prepend=bos_token, num_threads=tokenizer_threads)
-            d_lists = tokenizer.encode([d_batch], num_threads=tokenizer_threads)
-            for d_tokens, e_tokens in zip(d_lists, e_lists):
-                t_buffer.extend(e_tokens)
-                t_buffer.extend(d_tokens)
-                # mlen = max(len(d_tokens), len(e_tokens))
-                # d_buffer.extend(d_tokens + [bos_token] * (mlen-len(d_tokens)))
-                # e_buffer.extend(e_tokens + [bos_token] * (mlen-len(e_tokens)))
+
+            if use_generator:
+                # Generator mode: tokenize prompts and responses separately
+                e_lists = tokenizer.encode([e_batch], prepend=bos_token, num_threads=tokenizer_threads)
+                d_lists = tokenizer.encode([d_batch], num_threads=tokenizer_threads)
+                for d_tokens, e_tokens in zip(d_lists, e_lists):
+                    t_buffer.extend(e_tokens)
+                    t_buffer.extend(d_tokens)
+            else:
+                # Parquet mode: just tokenize text documents
+                d_lists = tokenizer.encode(d_batch, prepend=bos_token, num_threads=tokenizer_threads)
+                for tokens in d_lists:
+                    t_buffer.extend(tokens)
 
 
 

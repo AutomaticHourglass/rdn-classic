@@ -19,6 +19,14 @@ from generator.generator_calc import safe_eval_math
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
+
+# -----------------------------------------------------------------------------
+# AGENT SELECTION - Change this to train different agents
+# -----------------------------------------------------------------------------
+AGENT = "rdn"  # Options: "rdn", "calculator", "tictactoe"
+# "rdn" = normal pretraining on text data (standard nanochat)
+# "calculator"/"tictactoe" = task-specific agents with generators
+# -----------------------------------------------------------------------------
 import time
 from contextlib import nullcontext
 
@@ -89,6 +97,9 @@ parser.add_argument("--sample_every", type=int, default=250, help="sample from m
 parser.add_argument("--save_every", type=int, default=250, help="save checkpoints every N steps (-1 = only at end)")
 # Output
 parser.add_argument("--model_tag", type=str, default=None, help="override model tag for checkpoint directory name")
+# Agent selection
+parser.add_argument("--agent", type=str, default=AGENT, choices=["rdn", "calculator", "tictactoe"],
+                    help="which agent to train (rdn=pretraining, calculator, tictactoe)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -251,14 +262,32 @@ if resuming:
     del optimizer_data  # free up the memory
 
 # -----------------------------------------------------------------------------
+# Configure agent (train only selected agent)
+use_generator = True  # Default: use generators
+if args.agent == "rdn":
+    use_generator = False  # Use normal text dataloader
+    print0(f"Training mode: RDN (pretraining on text data)")
+elif args.agent == "calculator":
+    from generator import configure_mix
+    configure_mix(calculator=1.0, tictactoe=0.0)
+    print0(f"Training agent: CALCULATOR (math expressions)")
+elif args.agent == "tictactoe":
+    from generator import configure_mix
+    configure_mix(calculator=0.0, tictactoe=1.0)
+    print0(f"Training agent: TIC-TAC-TOE (game state management)")
+else:
+    raise ValueError(f"Unknown agent: {args.agent}")
+
+# -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state(args.device_batch_size, args.max_seq_len, split="train",
                                                              device=device,
-                                                             resume_state_dict=dataloader_resume_state_dict)
+                                                             resume_state_dict=dataloader_resume_state_dict,
+                                                             use_generator=use_generator)
 build_val_loader = lambda: tokenizing_distributed_data_loader(args.device_batch_size, args.max_seq_len, split="val",
-                                                              device=device)
+                                                              device=device, use_generator=use_generator)
 x, y = next(train_loader)  # kick off load of the very first batch of data
 
 
@@ -328,8 +357,9 @@ while True:
 
     # once in a while: estimate the CORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
+    # ONLY for RDN mode (not for generator-based agents)
     results = {}
-    if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
+    if args.agent == "rdn" and args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
         model.eval()
         with autocast_ctx:
             results = evaluate_model(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
@@ -344,13 +374,18 @@ while True:
 
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
-    if master_process and (last_step or (step >= 0 and step % args.sample_every == 0)):
+    # ONLY for generator-based agents (not for RDN pretraining)
+    if use_generator and master_process and (last_step or (step >= 0 and step % args.sample_every == 0)):
         model.eval()
         engine = Engine(orig_model, tokenizer)
         total_eval = 0
         total_corr = 0
         total_score = 0
         tool_correctness = -1e-2
+
+        # Get agent-specific evaluator
+        from generator.evaluator import get_evaluator
+        evaluator = get_evaluator(args.agent)
 
         # 1. Collection Phase: Gather all prompts and expected values
         batch_prompts = []      # List[List[int]]
@@ -364,16 +399,12 @@ while True:
             s = tokenizer.decode(pp)
             all_ps = s.split('<|bos|>')[1:-1]
             for p in all_ps:
-                try:
-                    # Parse expected value 'e' and question 'q'
-                    e = p.split('"')[-2]
-                    q = p.split('?')[0] + '?'
-
-                    batch_prompts.append(tokenizer.encode(q))
-                    batch_expecteds.append(e)
-                    batch_qs.append(q)
-                except Exception:
-                    continue
+                # Use agent-specific parser
+                prompt, expected = evaluator.parse_problem(p)
+                if prompt is not None and expected is not None:
+                    batch_prompts.append(tokenizer.encode(prompt))
+                    batch_expecteds.append(expected)
+                    batch_qs.append(prompt)
 
         # 2. Inference Phase: Run everything in parallel
         if batch_prompts:
@@ -399,43 +430,19 @@ while True:
                             else:
                                 batch_results[i].append(token)
 
-            # 3. Evaluation Phase: Process results
+            # 3. Evaluation Phase: Process results using agent-specific evaluator
             for i, sample in enumerate(batch_results):
                 total_eval += 1
-                eval_score = 0
-                pratio=0
-                q = batch_qs[i]
-                e = batch_expecteds[i]
-                ppred = ''
+                prompt = batch_qs[i]
+                expected = batch_expecteds[i]
+                predicted = tokenizer.decode(sample)
 
-                eval_pred = safe_eval_math(e)
-                try:
-                    pred = tokenizer.decode(sample)
-                    # Filter split to avoid empty strings, matching original logic
-                    parts = list(filter(lambda x: len(x) > 0, pred.split('"')))
+                # Use agent-specific evaluation
+                res = evaluator.evaluate(prompt, expected, predicted)
+                all_generate.append(res)
 
-                    # We expect at least the prompt and the answer part
-                    if len(parts) > 1:
-                        pe = parts[1]
-                        ppred = pe
-                        # Extract inner content if quoted with single quotes
-                        # pe = pe.split("'")[-2]
-
-                        pred_pred = safe_eval_math(pe)
-                        pratio = fuzz.partial_ratio(e,pe)/100 * min(len(pe),len(e))/max(len(pe),len(e))
-                        if pratio >= 0.98 or eval_pred == pred_pred or abs((eval_pred - pred_pred) / eval_pred) < 1e-5:
-                            eval_score = 1
-                            pratio = 1
-                            total_corr += 1
-                        else:
-                            pass
-                        total_score += pratio
-                except Exception:
-                    pass
-
-                # print0(f"{pratio:.2f}-{eval_score}-{q}{ppred}")
-                res = {'prompt':q, 'label':e,'pred':ppred,'score':pratio,'corr':eval_score}
-                all_generate += [res]
+                total_corr += res['corr']
+                total_score += res['score']
 
             sorted_all = sorted(
                 all_generate,

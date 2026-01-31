@@ -253,35 +253,90 @@ impl Tokenizer {
         None
     }
 
-    /// Recursively split a string into the *leaf* words (no delimiters left).
+    /// Extract words from text using the SAME logic as tokenize_with_stack.
+    /// This ensures BPE training sees the same word boundaries as encoding.
     fn split_into_words(text: &str) -> Vec<CompactString> {
-        let mut out = Vec::new();
-        Self::split_recursive(text, 0, &mut out);
-        out
-    }
+        let mut words = Vec::new();
 
-    fn split_recursive(text: &str, idx: usize, out: &mut Vec<CompactString>) {
-        if idx == DELIMITERS.len() - 1 {
-            // last delimiter is a space
-            for w in text.split(' ') {
-                if !w.is_empty() {
-                    out.push(CompactString::from(w));
-                }
-            }
+        // Skip special tokens at the start (they're not BPE-trained)
+        let text_to_process = if let Some((token, _)) = Self::leading_special_token_static(text) {
+            &text[token.len()..]
         } else {
-            let delim = DELIMITERS[idx];
-            if !text.contains(delim) {
-                // nothing to split – go deeper
-                Self::split_recursive(text, idx + 1, out);
-            } else {
-                for part in text.split(delim) {
-                    // recurse on every sub‑segment
-                    if !part.is_empty() {
-                        Self::split_recursive(part, idx + 1, out);
+            text
+        };
+
+        // Use static maps for paired delimiters
+        let opener_to_closer = get_opener_to_closer();
+        let closer_to_opener = get_closer_to_opener();
+
+        let mut stack: Vec<char> = Vec::new();
+        let mut buf = String::new();
+
+        for ch in text_to_process.chars() {
+            if opener_to_closer.contains_key(&ch) {
+                // Opening delimiter - flush current word
+                if !buf.is_empty() {
+                    words.push(CompactString::from(&buf));
+                    buf.clear();
+                }
+                stack.push(ch);
+            } else if closer_to_opener.contains_key(&ch) {
+                // Closing delimiter - flush current word
+                if !buf.is_empty() {
+                    words.push(CompactString::from(&buf));
+                    buf.clear();
+                }
+                if let Some(&top) = stack.last() {
+                    if opener_to_closer[&top] == ch {
+                        stack.pop();
+                    } else {
+                        buf.push(ch); // mismatched – treat as text
                     }
+                } else {
+                    buf.push(ch); // no opener – treat as text
+                }
+            } else {
+                if DELIMITERS.iter().any(|&d| d.contains(ch)) {
+                    // Regular delimiter - flush current word
+                    if !buf.is_empty() {
+                        words.push(CompactString::from(&buf));
+                        buf.clear();
+                    }
+                } else {
+                    // Normal character - accumulate
+                    buf.push(ch);
                 }
             }
         }
+
+        // Flush final word
+        if !buf.is_empty() {
+            words.push(CompactString::from(&buf));
+        }
+
+        words
+    }
+
+    /// Helper for split_into_words to check special tokens without &self
+    fn leading_special_token_static(text: &str) -> Option<(&'static str, u32)> {
+        const SPECIALS: &[(&str, u32)] = &[
+            (BOS_TOKEN, 0),
+            (USER_START_TOKEN, 1),
+            (USER_END_TOKEN, 2),
+            (ASSISTANT_START_TOKEN, 3),
+            (ASSISTANT_END_TOKEN, 4),
+            (PYTHON_START_TOKEN, 5),
+            (PYTHON_END_TOKEN, 6),
+            (OUTPUT_START_TOKEN, 7),
+            (OUTPUT_END_TOKEN, 8),
+        ];
+
+        for &(token, id) in SPECIALS {
+            if text.starts_with(token) {
+                return Some((token, id));
+            }
+        }
+        None
     }
 
     /// Build the token_bytes cache for fast decoding.

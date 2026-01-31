@@ -81,6 +81,10 @@ pub struct Tokenizer {
     #[pyo3(get, set)]
     pub n_vocab: u32,
 
+    /// Whether to use recursive UP/DOWN markers (RDN mode) or plain encoding (GPT mode)
+    #[pyo3(get, set)]
+    pub use_recursive_markers: bool,
+
     /// Cached token ID to bytes mapping for fast decoding
     /// Built after training or loading from disk
     token_bytes_cache: Option<Vec<Vec<u8>>>,
@@ -93,6 +97,12 @@ struct TokenizerData {
     merges: Vec<(Pair, u32)>,
     pattern: String,
     n_vocab: u32,
+    #[serde(default = "default_use_recursive_markers")]
+    use_recursive_markers: bool,
+}
+
+fn default_use_recursive_markers() -> bool {
+    true  // Default to RDN mode for backward compatibility
 }
 
 // ------------------------ internal helpers ------------------------
@@ -539,14 +549,18 @@ impl Tokenizer {
         ids
     }
 
-    /// Flush the current buffer as a BPE‑encoded word surrounded by
-    /// DOWN_ID / UP_ID.
+    /// Flush the current buffer as a BPE‑encoded word, optionally surrounded by
+    /// DOWN_ID / UP_ID markers (RDN mode only).
     #[inline]
     fn flush_word(&self, out: &mut Vec<u32>, buf: &String) {
         if !buf.is_empty() {
-            out.push(DOWN_ID);
+            if self.use_recursive_markers {
+                out.push(DOWN_ID);
+            }
             out.extend(self.encode_word(buf));
-            out.push(UP_ID);
+            if self.use_recursive_markers {
+                out.push(UP_ID);
+            }
         }
     }
 
@@ -636,10 +650,12 @@ impl Tokenizer {
         //             res.remove(0);
         //         }
         //
-        // 3️⃣ – strip *every* trailing UP_ID
-        while res.last().map_or(false, |&x| x == UP_ID) {
-            // `pop()` is O(1)
-            res.pop();
+        // 3️⃣ – strip *every* trailing UP_ID (only in RDN mode)
+        if self.use_recursive_markers {
+            while res.last().map_or(false, |&x| x == UP_ID) {
+                // `pop()` is O(1)
+                res.pop();
+            }
         }
         //         // 3️⃣ – strip *every* trailing DOWN_ID
         //         while res.last().map_or(false, |&x| x == DOWN_ID) {
@@ -660,6 +676,7 @@ impl Tokenizer {
             merges: StdHashMap::new(),
             pattern: String::new(),
             n_vocab: 0,
+            use_recursive_markers: true,  // Default to RDN mode
             token_bytes_cache: None,
         }
     }
@@ -684,6 +701,7 @@ impl Tokenizer {
             merges: self.merges.iter().map(|(k, v)| (*k, *v)).collect(),
             pattern: self.pattern.clone(),
             n_vocab: self.n_vocab + 1,
+            use_recursive_markers: self.use_recursive_markers,
         };
 
         let json = serde_json::to_string_pretty(&data).map_err(|e| {
@@ -746,6 +764,7 @@ impl Tokenizer {
             merges,
             pattern: data.pattern,
             n_vocab: data.n_vocab,
+            use_recursive_markers: data.use_recursive_markers,
             token_bytes_cache: None,
         };
 

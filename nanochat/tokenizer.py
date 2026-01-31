@@ -471,10 +471,11 @@ def text_iterator():
             yield doc_text
             if nchars > int(1e8):
                 return
-def get_tokenizer():
+def get_tokenizer(use_recursive_markers=True):
     tokenizer_path = os.path.join(base_dir, "tokenizer")
     if os.path.exists(tokenizer_path):
         tokenizer = rdt.Tokenizer.load(tokenizer_path)
+        tokenizer.use_recursive_markers = use_recursive_markers
     else:
         text_iter = text_iterator()
         vocab_size = 1024
@@ -485,6 +486,8 @@ def get_tokenizer():
         assert vocab_size_no_special >= 256, f"vocab_size_no_special must be at least 256, got {vocab_size_no_special}"
         tokenizer.train_from_iterator(text_iter, vocab_size_no_special, pattern=SPLIT_PATTERN)
 
+    # Set whether to use UP/DOWN recursive markers (RDN mode) or plain encoding (GPT mode)
+    tokenizer.use_recursive_markers = use_recursive_markers
     return RustBPETokenizer(tokenizer, "<|bos|>")
 
 def get_token_bytes(device="cpu"):

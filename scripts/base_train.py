@@ -100,6 +100,9 @@ parser.add_argument("--model_tag", type=str, default=None, help="override model 
 # Agent selection
 parser.add_argument("--agent", type=str, default=AGENT, choices=["rdn", "calculator", "tictactoe"],
                     help="which agent to train (rdn=pretraining, calculator, tictactoe)")
+# GPT mode (standard architecture)
+parser.add_argument("--gpt", action="store_true", default=False,
+                    help="use standard GPT architecture (RoPE only, no coordinate embeddings)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -114,7 +117,12 @@ synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-tokenizer = get_tokenizer()
+tokenizer = get_tokenizer(not args.gpt)
+if args.gpt:
+    print0("Using RustBPE tokenizer (GPT mode: no UP/DOWN markers, no coordinate embeddings)")
+else:
+    print0("Using RustBPE tokenizer (RDN mode: with UP/DOWN markers and coordinate embeddings)")
+
 token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
@@ -147,13 +155,14 @@ print0(f"model_dim: {model_dim}")
 print0(f"num_heads: {num_heads}")
 print0(f"num_kv_heads: {num_kv_heads}")
 print0(f"num_streams: {args.n_streams}")
+print0(f"gpt_mode: {args.gpt} (coordinate embeddings: {not args.gpt})")
 
 # print0(f"n_experts: {args.n_experts}")
 # print0(f"n_shared_experts: {args.n_shared_experts}")
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-run_name = ["RDN"]
+run_name = ["GPT" if args.gpt else "RDN"]
 if args.n_streams > 1:
     run_name += ['mHC']
 # if args.n_experts > 1:
@@ -165,10 +174,18 @@ run_name = " + ".join(run_name)
 
 if args.model_tag:
     run_name = args.model_tag
+else:
+    param_part = f" D{args.depth}_H{num_heads}_HKV{num_kv_heads}_R{args.head_dim}_V{vocab_size}"
+    run_name = run_name + param_part
 
-run_name = f"D{args.depth}_H{num_heads}_HKV{num_kv_heads}_R{args.head_dim}_V{vocab_size}"
+if args.agent == 'calculator':
+    project = 'agent-calc'
+elif args.agent == 'tictactoe':
+    project = 'agent-tictactoe'
+else:
+    project = 'RDN-classic'
 
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="agent-calc", name=run_name, config=user_config)
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project=project, name=run_name, config=user_config)
 
 # Optimizer / data / training length related hyperparameters
 # figure out the needed gradient accumulation to reach the desired total batch size
@@ -196,8 +213,17 @@ if batch_ratio != 1.0:
 # Initialize the Model
 
 # Create a new model with random weights
-model_config_kwargs = dict(sequence_len=args.max_seq_len, vocab_size=vocab_size, n_head=num_heads,n_dimensions=args.recursion,
-                           n_kv_head=num_kv_heads, n_embd=model_dim, n_streams=args.n_streams, page_size=args.page_size)
+model_config_kwargs = dict(
+    sequence_len=args.max_seq_len,
+    vocab_size=vocab_size,
+    n_head=num_heads,
+    n_dimensions=args.recursion,
+    n_kv_head=num_kv_heads,
+    n_embd=model_dim,
+    n_streams=args.n_streams,
+    page_size=args.page_size,
+    use_coordinate_embeddings=not args.gpt  # GPT mode disables coordinate embeddings
+)
 with torch.device("meta"):
     # All tensors are created as meta tensors (they have shape/dtype but no data)
     model_config = GPTConfig(**model_config_kwargs)
@@ -285,9 +311,9 @@ dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_s
 train_loader = tokenizing_distributed_data_loader_with_state(args.device_batch_size, args.max_seq_len, split="train",
                                                              device=device,
                                                              resume_state_dict=dataloader_resume_state_dict,
-                                                             use_generator=use_generator)
+                                                             use_generator=use_generator, use_recursive_markers= not args.gpt)
 build_val_loader = lambda: tokenizing_distributed_data_loader(args.device_batch_size, args.max_seq_len, split="val",
-                                                              device=device, use_generator=use_generator)
+                                                              device=device, use_generator=use_generator, use_recursive_markers= not args.gpt)
 x, y = next(train_loader)  # kick off load of the very first batch of data
 
 

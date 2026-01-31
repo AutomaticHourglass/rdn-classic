@@ -28,7 +28,7 @@ def list_splits() -> list[str]:
     return list(DS.keys())
 
 
-def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None, use_generator=True):
+def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None, use_generator=True, use_recursive_markers=True):
     """
     Stream pretraining text from parquet files, tokenize, yield training batches.
 
@@ -84,7 +84,7 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
     # Now emit batches of tokens.
     needed_tokens = B * (T + 1) # +1 is because we also need the target at the last token
     # get the tokenizer and the bos token
-    tokenizer = get_tokenizer()
+    tokenizer = get_tokenizer(use_recursive_markers=use_recursive_markers)
     bos_token = tokenizer.get_bos_token_id()
     # scratch buffer holds the tokens for one iteration
     t_buffer = deque() # we stream tokens on the right and pop from the left

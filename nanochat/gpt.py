@@ -37,6 +37,7 @@ class GPTConfig:
     n_dimensions: int = 8           # Number of recursive tokenization levels
     page_size: int = 8192
     n_streams: int = 4
+    use_coordinate_embeddings: bool = True  # False for standard GPT (RoPE only), True for RDN coordinate embeddings
     # MoE Specifics
     moe_enabled: bool = False
     n_routed_experts: int = 8      # Total number of selectable experts
@@ -655,19 +656,24 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.transformer = nn.ModuleDict(
-            {
-                "wte": nn.Embedding(config.vocab_size, config.n_embd),
-                "wpe": CoordGatedMLPWithRoPE(
-                    n_dim=self.config.n_dimensions,
-                    hidden_dim=self.config.n_embd,
-                    seq_len=self.config.sequence_len,
-                ),
-                "h": nn.ModuleList(
-                    [MHCBlock(config, layer_idx) if self.config.n_streams > 1 else Block(config, layer_idx) for layer_idx in range(config.n_layer)]
-                ),
-            }
-        )
+
+        # Build transformer components
+        transformer_dict = {
+            "wte": nn.Embedding(config.vocab_size, config.n_embd),
+            "h": nn.ModuleList(
+                [MHCBlock(config, layer_idx) if self.config.n_streams > 1 else Block(config, layer_idx) for layer_idx in range(config.n_layer)]
+            ),
+        }
+
+        # Positional embedding: coordinate-based (RDN) or None (standard GPT uses only RoPE in attention)
+        if config.use_coordinate_embeddings:
+            transformer_dict["wpe"] = CoordGatedMLPWithRoPE(
+                n_dim=self.config.n_dimensions,
+                hidden_dim=self.config.n_embd,
+                seq_len=self.config.sequence_len,
+            )
+
+        self.transformer = nn.ModuleDict(transformer_dict)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
@@ -707,12 +713,14 @@ class GPT(nn.Module):
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
 
-        common_base = float((2 * 3 * 5 * 7) ** 2 * (2 * 3))
-        # common_base = 264593.0
-        self.transformer.wpe.base_frequencies = torch.tensor(
-            [common_base ** (i / self.config.n_dimensions) for i in range(self.config.n_dimensions, 0, -1)],
-            dtype=torch.float32, device=self.lm_head.weight.device
-        )
+        # Initialize coordinate embeddings if they exist (RDN mode)
+        if hasattr(self.transformer, 'wpe'):
+            common_base = float((2 * 3 * 5 * 7) ** 2 * (2 * 3))
+            # common_base = 264593.0
+            self.transformer.wpe.base_frequencies = torch.tensor(
+                [common_base ** (i / self.config.n_dimensions) for i in range(self.config.n_dimensions, 0, -1)],
+                dtype=torch.float32, device=self.lm_head.weight.device
+            )
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -830,11 +838,10 @@ class GPT(nn.Module):
         ddp, rank, local_rank, world_size = get_dist_info()
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
         matrix_params = list(self.transformer.h.parameters())
-        embedding_params = (
-            list(self.transformer.wte.parameters())
-            + list(self.transformer.wpe.gate.parameters())
-            + list(self.transformer.wpe.proj.parameters())
-        )
+        embedding_params = list(self.transformer.wte.parameters())
+        if hasattr(self.transformer, 'wpe'):
+            embedding_params += list(self.transformer.wpe.gate.parameters()) + list(self.transformer.wpe.proj.parameters())
+
         lm_head_params = list(self.lm_head.parameters())
         assert len(list(self.parameters())) == len(matrix_params) + len(
             embedding_params
@@ -885,11 +892,16 @@ class GPT(nn.Module):
         )  # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
-        with torch.no_grad():
-            coords = compute_coords(idx.to(torch.long))
-            coords[coords >= self.config.sequence_len] = self.config.sequence_len - 1
+        x = self.transformer.wte(idx)
 
-        x = self.transformer.wte(idx) + self.transformer.wpe(coords)
+        if self.config.use_coordinate_embeddings:
+            # RDN: use coordinate embeddings
+            with torch.no_grad():
+                coords = compute_coords(idx.to(torch.long))
+                coords[coords >= self.config.sequence_len] = self.config.sequence_len - 1
+            x = x + self.transformer.wpe(coords)
+        # Standard GPT mode: no explicit positional embeddings (RoPE in attention is sufficient)
+
         x = norm(x)
         # ------------------------------------------------------------------
         # 2. Expand into M streams before the block loop

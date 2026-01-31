@@ -32,10 +32,19 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     batch_iter = iter(batches)
     # token_bytes = torch.cat([token_bytes,torch.tensor([2],dtype=token_bytes.dtype).to(token_bytes.device)])
     for _ in range(steps):
-        x, y = next(batch_iter)
-        loss2d = model(x, y, loss_reduction='none') # (B, T)
+        batch = next(batch_iter)
+        # Handle both coordinate and non-coordinate dataloaders
+        if len(batch) == 5:  # (x, y, coords_x, coords_y, state_dict)
+            x, y, coords_x, coords_y, _ = batch
+        elif len(batch) == 3:  # (x, y, state_dict)
+            x, y, _ = batch
+            coords_x = None
+        else:  # (x, y) - legacy
+            x, y = batch
+            coords_x = None
+        loss2d = model(x, y, coords=coords_x, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1).to(torch.float32) # flatten
-        y = y.view(-1) # flatten
+        y = y.reshape(-1) # flatten
         # if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32
         # slightly more complex code path if some target tokens are ignore_index (e.g. -1)
         # any target token < 0 is to be ignored: do NOT index token_bytes with negatives

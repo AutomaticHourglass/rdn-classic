@@ -34,7 +34,8 @@ import wandb
 import torch
 
 from rdn.gpt import GPT, GPTConfig
-from rdn.dataloader import tokenizing_distributed_data_loader, tokenizing_distributed_data_loader_with_state
+from rdn.dataloader import get_dataloader
+from rdn.tokenizer import get_tokenizer
 from rdn.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, \
     autodetect_device_type
 from rdn.tokenizer import get_tokenizer, get_token_bytes
@@ -306,15 +307,62 @@ else:
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
+
+# Get tokenizer (needed for dataloader)
+tokenizer = get_tokenizer(use_recursive_markers=not args.gpt)
+
+# Determine if using coordinates (respects --gpt flag)
+use_coordinates = not args.gpt  # True by default, False with --gpt flag
+
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state(args.device_batch_size, args.max_seq_len, split="train",
-                                                             device=device,
-                                                             resume_state_dict=dataloader_resume_state_dict,
-                                                             use_generator=use_generator, use_recursive_markers= not args.gpt)
-build_val_loader = lambda: tokenizing_distributed_data_loader(args.device_batch_size, args.max_seq_len, split="val",
-                                                              device=device, use_generator=use_generator, use_recursive_markers= not args.gpt)
-x, y = next(train_loader)  # kick off load of the very first batch of data
+
+# Use new unified dataloader with GPU coordinates
+train_loader = get_dataloader(
+    tokenizer,
+    args.device_batch_size,
+    args.max_seq_len,
+    split="train",
+    device=device,
+    resume_state_dict=dataloader_resume_state_dict,
+    use_coordinates=use_coordinates,  # GPU-accelerated coords (or None for --gpt)
+    n_coord_dim=args.recursion,
+    use_bos_aligned=True,  # Best-fit document packing
+    prefetch=True,  # Background prefetching
+    prefetch_count=3,
+    use_generator=use_generator,
+    use_recursive_markers=not args.gpt,
+    tokenizer_threads=16,  # More threads for faster tokenization
+    tokenizer_batch_size=256,
+)
+
+build_val_loader = lambda: get_dataloader(
+    tokenizer,
+    args.device_batch_size,
+    args.max_seq_len,
+    split="val",
+    device=device,
+    use_coordinates=use_coordinates,
+    n_coord_dim=args.recursion,
+    use_bos_aligned=True,
+    prefetch=False,  # No prefetch for validation (single pass)
+    use_generator=use_generator,
+    use_recursive_markers=not args.gpt,
+    tokenizer_threads=16,
+    tokenizer_batch_size=256,
+)
+
+# Unpack first batch (coordinates if enabled, otherwise just tokens)
+if use_coordinates and not use_generator:
+    x, y, coords_x, coords_y, dataloader_state_dict = next(train_loader)
+else:
+    batch = next(train_loader)
+    if len(batch) == 3:  # (inputs, targets, state_dict)
+        x, y, dataloader_state_dict = batch
+    else:  # generator mode: (inputs, targets)
+        x, y = batch
+        dataloader_state_dict = {}
+    coords_x = None
 
 
 # -----------------------------------------------------------------------------
@@ -510,6 +558,7 @@ while True:
                     "user_config": user_config,  # inputs to the training script
                     "device_batch_size": args.device_batch_size,
                     "max_seq_len": args.max_seq_len,
+                    "dataloader_state_dict": dataloader_state_dict,  # For resuming
                 },
             )
 
@@ -537,11 +586,22 @@ while True:
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y)
+            # Pass coordinates to model (None for --gpt mode)
+            loss = model(x, y, coords=coords_x)
         train_loss = loss.detach()  # for logging
         loss = loss / grad_accum_steps  # each .backward() is a grad sum => normalize loss here
         loss.backward()
-        x, y = next(train_loader)  # prefetch the next batch while the GPU is busy with forward/backward
+        # Prefetch next batch (unpack coordinates if available)
+        if use_coordinates and not use_generator:
+            x, y, coords_x, coords_y, dataloader_state_dict = next(train_loader)
+        else:
+            batch = next(train_loader)
+            if len(batch) == 3:  # (inputs, targets, state_dict)
+                x, y, dataloader_state_dict = batch
+            else:  # generator mode: (inputs, targets)
+                x, y = batch
+                dataloader_state_dict = {}
+            coords_x = None
     # step the optimizers`
     lrm = get_lr_multiplier(step)
     for opt in optimizers:

@@ -873,7 +873,15 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction="mean"):
+    def forward(self, idx, targets=None, coords=None, kv_cache=None, loss_reduction="mean"):
+        """
+        Args:
+            idx: Token IDs [B, T]
+            targets: Target token IDs [B, T] (optional, for training)
+            coords: Hierarchical coordinates [B, T, n_dimensions] (optional, for RDN mode)
+            kv_cache: KV cache for inference (optional)
+            loss_reduction: Loss reduction mode ('mean' or 'none')
+        """
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -896,11 +904,15 @@ class GPT(nn.Module):
 
         if self.config.use_coordinate_embeddings:
             # RDN: use coordinate embeddings
-            with torch.no_grad():
-                coords = compute_coords(idx.to(torch.long))
-                coords[coords >= self.config.sequence_len] = self.config.sequence_len - 1
+            if coords is None:
+                # Fallback to CPU coordinate calculation if not provided
+                # This is slower but maintains compatibility
+                from rdn.utils import compute_coords
+                with torch.no_grad():
+                    coords = compute_coords(idx.to(torch.long))
+                    coords[coords >= self.config.sequence_len] = self.config.sequence_len - 1
             x = x + self.transformer.wpe(coords)
-        # Standard GPT mode: no explicit positional embeddings (RoPE in attention is sufficient)
+        # Standard GPT mode (--gpt flag): no explicit positional embeddings (RoPE in attention is sufficient)
 
         x = norm(x)
         # ------------------------------------------------------------------
@@ -937,7 +949,7 @@ class GPT(nn.Module):
             # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
-                targets.view(-1),
+                targets.reshape(-1),
                 ignore_index=258,
                 reduction=loss_reduction,
             )

@@ -56,104 +56,36 @@ def list_parquet_files(data_dir=None):
 #             texts = rg.column('text').to_pylist()
 #             yield texts
 
-from datasets import load_dataset, load_from_disk
+# Removed DS and related functions - not needed for on-the-fly generation
 
-# The dataset comes pre‑split into the keys you request.  At least
-# a `train` split is guaranteed; if you need a validation set look
-# for the key that contains it (often `test` or `validation`).
-# DS = load_dataset("danilopeixoto/pandora-tool-calling")
-# DS['val']=DS['validation']
-DS = load_from_disk('generator/calc')
-DS['val'] = DS['test']
-
-# ------------------------------------------------------------------
-# 2️⃣  Utility – list the available splits (useful for debugging)
-# ------------------------------------------------------------------
-def list_splits() -> list[str]:
+def parquets_iter_batched(split: str = "train", *, start: int = 0, step: int = 1):
     """
-    Return a list of split names that are available in the loaded dataset.
-    """
-    return list(DS.keys())
-
-
-# ------------------------------------------------------------------
-# 3️⃣  Iteration helper – yields batches of the ``messages`` column
-# ------------------------------------------------------------------
-def parquets_iter_batched(
-    split: str = "train",
-    *,
-    start: int = 0,
-    step: int = 1,
-    batch_size: int | None = None,
-):
-    """
-    Iterate over a HuggingFace `datasets` split in batches, mirroring the
-    behaviour of your original ``parquets_iter_batched`` helper.
+    Iterate through the parquet dataset files.
 
     Parameters
     ----------
-    split : str, optional
-        Which split to iterate over.  Must be a key in ``DS``.
-    start : int, optional
-        Index of the first row to include (used for DDP sharding).
-    step : int, optional
-        Stride between rows.  For DDP this is typically the world size.
-    batch_size : int | None, optional
-        Number of rows to return in each yielded list.  If ``None`` the
-        helper will yield one row at a time (i.e. `batch_size = 1`).
+    split : str
+        'train' or 'val' - the last parquet file will be val.
+    start : int
+        Starting index for DDP (typically rank)
+    step : int
+        Step size for DDP (typically world_size)
 
     Yields
     ------
     list[str]
-        A list of the ``messages`` field from the dataset, with length
-        equal to ``batch_size`` (or 1 if ``batch_size is None``).
-
-    Notes
-    -----
-    * The helper uses the *exact* order that ``datasets`` returns – no
-      shuffling is performed.  If you need random access or a shuffled
-      iterator, call ``DS[split].shuffle(...)`` before passing the split.
-    * If you are using DDP, set ``start=rank`` and ``step=world_size``.
-    * For a validation split you can pass whatever key the dataset
-      exposes – commonly ``"test"``, but inspect ``list_splits()`` to be
-      sure.
+        Batches of text from the parquet files
     """
-    # ------------------------------------------------------------------
-    # Validate the requested split
-    # ------------------------------------------------------------------
-    if split not in DS:
-        raise ValueError(
-            f"Requested split `{split}` is not available. "
-            f"Available splits: {list_splits()}"
-        )
+    assert split in ["train", "val"], "split must be 'train' or 'val'"
+    parquet_paths = list_parquet_files()
+    parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
 
-    # ------------------------------------------------------------------
-    # Grab the split (it may be a `Dataset` or an `IterableDataset`)
-    # ------------------------------------------------------------------
-    dataset = DS[split]
-
-    # ------------------------------------------------------------------
-    # Compute the indices that will be iterated over.
-    # ------------------------------------------------------------------
-    total = len(dataset)
-    if step <= 0:
-        raise ValueError("`step` must be a positive integer")
-    indices = list(range(start, total, step))
-
-    # ------------------------------------------------------------------
-    # Decide on a sensible default batch size
-    # ------------------------------------------------------------------
-    if batch_size is None:
-        batch_size = 1
-
-    # ------------------------------------------------------------------
-    # Yield in chunks
-    # ------------------------------------------------------------------
-    for i in range(0, len(indices), batch_size):
-        chunk_indices = indices[i : i + batch_size]
-        # Pull the ``messages`` field from each example
-        texts = [generate_random_problem() for j in chunk_indices]
-        yield texts
+    for filepath in parquet_paths:
+        pf = pq.ParquetFile(filepath)
+        for rg_idx in range(start, pf.num_row_groups, step):
+            rg = pf.read_row_group(rg_idx)
+            texts = rg.column('text').to_pylist()
+            yield texts
 
 # -----------------------------------------------------------------------------
 def download_single_file(index):

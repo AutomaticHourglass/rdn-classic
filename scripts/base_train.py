@@ -156,8 +156,6 @@ print0(f"model_dim: {model_dim}")
 print0(f"num_heads: {num_heads}")
 print0(f"num_kv_heads: {num_kv_heads}")
 print0(f"num_streams: {args.n_streams}")
-print0(f"gpt_mode: {args.gpt} (coordinate embeddings: {not args.gpt})")
-
 # print0(f"n_experts: {args.n_experts}")
 # print0(f"n_shared_experts: {args.n_shared_experts}")
 

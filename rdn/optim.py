@@ -17,12 +17,12 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=False, fullgraph=True)
+@torch.compile(dynamic=True, fullgraph=True)
 def adamw_step_fused(
-    p: Tensor,              # (32768, 768) - parameter tensor
-    grad: Tensor,           # (32768, 768) - gradient, same shape as p
-    exp_avg: Tensor,        # (32768, 768) - first moment, same shape as p
-    exp_avg_sq: Tensor,     # (32768, 768) - second moment, same shape as p
+    p: Tensor,              # (32768, 768) or (n_layer,) - parameter tensor (2D or 1D)
+    grad: Tensor,           # (32768, 768) or (n_layer,) - gradient, same shape as p
+    exp_avg: Tensor,        # (32768, 768) or (n_layer,) - first moment, same shape as p
+    exp_avg_sq: Tensor,     # (32768, 768) or (n_layer,) - second moment, same shape as p
     step_t: Tensor,         # () - 0-D CPU tensor, step count
     lr_t: Tensor,           # () - 0-D CPU tensor, learning rate
     beta1_t: Tensor,        # () - 0-D CPU tensor, beta1

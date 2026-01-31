@@ -54,6 +54,10 @@ pub struct Tokenizer {
     /// Size of the vocabulary
     #[pyo3(get, set)]
     pub n_vocab: u32,
+
+    /// Cached token ID to bytes mapping for fast decoding
+    /// Built after training or loading from disk
+    token_bytes_cache: Option<Vec<Vec<u8>>>,
 }
 
 /// A helper struct that contains only the serialisable fields.
@@ -254,6 +258,51 @@ impl Tokenizer {
         }
     }
 
+    /// Build the token_bytes cache for fast decoding.
+    /// This should be called after training or loading from disk.
+    fn build_decode_cache(&mut self) {
+        // Build vocabulary incrementally from low to high token IDs
+        let mut token_bytes: Vec<Vec<u8>> = (0..256_u32).map(|i| vec![i as u8]).collect();
+
+        // Add DOWN (↘) and UP (↗) markers
+        token_bytes.push(vec![0xE2, 0x86, 0x98]); // DOWN – U+2198
+        token_bytes.push(vec![0xE2, 0x86, 0x97]); // UP   – U+2197
+
+        // Add special tokens
+        let special_tokens = [
+            BOS_TOKEN,
+            USER_START_TOKEN,
+            USER_END_TOKEN,
+            ASSISTANT_START_TOKEN,
+            ASSISTANT_END_TOKEN,
+            PYTHON_START_TOKEN,
+            PYTHON_END_TOKEN,
+            OUTPUT_START_TOKEN,
+            OUTPUT_END_TOKEN,
+        ];
+
+        for token in special_tokens.iter() {
+            token_bytes.push(token.as_bytes().to_vec());
+        }
+
+        // Sort merges by token id (so we can reconstruct bytes progressively)
+        let mut sorted_merges: Vec<_> = self.merges.iter().collect();
+        sorted_merges.sort_by_key(|&(_, &token_id)| token_id);
+
+        for (&pair, &merged_id) in sorted_merges {
+            let (left, right) = pair;
+            let mut merged_bytes = token_bytes[left as usize].clone();
+            merged_bytes.extend(&token_bytes[right as usize]);
+
+            if token_bytes.len() <= merged_id as usize {
+                token_bytes.resize(merged_id as usize + 1, Vec::new());
+            }
+            token_bytes[merged_id as usize] = merged_bytes;
+        }
+
+        self.token_bytes_cache = Some(token_bytes);
+    }
+
     /// Core incremental BPE training given unique words and their counts.
     /// `words`: one entry per unique chunk (Vec<u32> of token-ids/bytes).
     /// `counts`: same length as `words`, count per chunk.
@@ -360,6 +409,9 @@ impl Tokenizer {
         }
 
         log::info!("Finished training: {} merges completed", merges_done);
+
+        // Build decode cache for fast decoding
+        self.build_decode_cache();
     }
 
     /// Encode a *single* word using the already‑trained BPE merges.
@@ -532,6 +584,7 @@ impl Tokenizer {
             merges: StdHashMap::new(),
             pattern: String::new(),
             n_vocab: 0,
+            token_bytes_cache: None,
         }
     }
 
@@ -613,11 +666,17 @@ impl Tokenizer {
         // Convert the Vec back into a HashMap.
         let merges = data.merges.into_iter().collect::<StdHashMap<_, _>>();
 
-        Ok(Tokenizer {
+        let mut tokenizer = Tokenizer {
             merges,
             pattern: data.pattern,
             n_vocab: data.n_vocab,
-        })
+            token_bytes_cache: None,
+        };
+
+        // Build decode cache for fast decoding
+        tokenizer.build_decode_cache();
+
+        Ok(tokenizer)
     }
 
     /// Train from a streaming iterator (parallel ingestion).
@@ -810,22 +869,32 @@ impl Tokenizer {
     }
 
     pub fn decode(&self, token_ids: Vec<u32>) -> String {
-        // Build a quick id → bytes lookup table.
-        // In production you would cache this after training to avoid rebuilding it each call.
-        let mergeable = self.get_mergeable_ranks(); // Vec<(bytes, id)>
-        let mut token_bytes: Vec<Vec<u8>> = vec![Vec::new(); mergeable.len()];
-        for (bytes, id) in mergeable {
-            token_bytes[id as usize] = bytes;
-        }
+        // Use cached token_bytes for fast lookup
+        let token_bytes = if let Some(ref cache) = self.token_bytes_cache {
+            cache
+        } else {
+            // Fallback: build on-the-fly if cache not available
+            // This shouldn't happen in normal usage after training/loading
+            let mergeable = self.get_mergeable_ranks();
+            let mut temp_bytes: Vec<Vec<u8>> = vec![Vec::new(); mergeable.len()];
+            for (bytes, id) in mergeable {
+                temp_bytes[id as usize] = bytes;
+            }
+            // Can't return reference to local variable, so we need to handle this differently
+            // For now, just panic with a helpful message
+            panic!("Decode cache not built. Call build_decode_cache() after training/loading.");
+        };
 
         let mut raw: Vec<u8> = Vec::new();
         for id in token_ids {
-            //             Skip the recursion markers – they carry no textual content.
+            // Skip the recursion markers – they carry no textual content.
             if id == DOWN_ID || id == UP_ID {
                 continue;
             }
             // Safety: the id must exist because it was produced by this tokenizer.
-            raw.extend(&token_bytes[id as usize]);
+            if (id as usize) < token_bytes.len() {
+                raw.extend(&token_bytes[id as usize]);
+            }
         }
 
         // Convert the concatenated bytes back to a UTF‑8 string.

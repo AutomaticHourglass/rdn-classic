@@ -44,8 +44,6 @@ from rdn.loss_eval import evaluate_bpb
 from rdn.engine import Engine
 from scripts.base_eval import evaluate_model
 
-print_banner()
-
 # -----------------------------------------------------------------------------
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
@@ -106,6 +104,8 @@ parser.add_argument("--gpt", action="store_true", default=False,
                     help="use standard GPT architecture (RoPE only, no coordinate embeddings)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
+
+print_banner(not args.gpt)
 # -----------------------------------------------------------------------------
 
 # Compute init

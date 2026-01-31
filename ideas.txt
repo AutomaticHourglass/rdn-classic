@@ -1,0 +1,100 @@
+⏺ Here are inspiring tool-use capabilities that would be reliably evaluatable and interesting to train:
+
+  🎯 Highly Practical
+
+  Data Table Operations
+  - Parse/manipulate CSV-like data, compute aggregations, filter rows
+  - Evaluation: Compare output tables exactly
+  - Why cool: Real data analysis workflows, teaches structured data understanding
+
+  Regex Pattern Generator
+  - User: "Match emails" → generates regex pattern
+  - Evaluation: Test pattern against known valid/invalid cases
+  - Why cool: Teaches symbolic pattern abstraction
+
+  Unit Converter with Awareness
+  - Not just "10 miles to km", but "I'm 6 feet tall, how tall in meters?"
+  - Evaluation: Verify numerical conversion
+  - Why cool: Combines NLU + precise calculation
+
+  🎨 Creative & Visual
+
+  ASCII Art/Diagram Generator
+  - Generate boxes, tables, simple flowcharts, bar charts
+  - Evaluation: Check structure/dimensions programmatically
+  - Why cool: Visual output, teaches spatial reasoning
+  <|python_start|>
+  for i in range(5): print('█' * (i+1))
+  <|python_end|>
+  <|output_start|>
+  █
+  ██
+  ███
+  ████
+  █████
+  <|output_end|>
+
+  Markdown Table Formatter
+  - Convert data to properly formatted markdown tables
+  - Evaluation: Parse and verify structure
+  - Why cool: Practical for docs/reports
+
+  🧮 Symbolic/Abstract
+
+  Boolean Expression Simplifier
+  - "(A AND B) OR (A AND NOT B)" → "A"
+  - Evaluation: Truth table equivalence check
+  - Why cool: Teaches logical reasoning
+
+  Set Operations Visualizer
+  - "Union of {1,2,3} and {2,3,4}" with visual representation
+  - Evaluation: Verify result set
+  - Why cool: Mathematical reasoning + visualization
+
+  Symbolic Differentiation
+  - Differentiate simple polynomials symbolically
+  - Evaluation: Verify against sympy
+  - Why cool: Shows algebraic manipulation capability
+
+  🎮 Interactive/Stateful
+
+  Game State Manager (Tic-Tac-Toe)
+  - Execute moves, check win conditions, display board
+  - Evaluation: Verify game rules followed
+  - Why cool: Multi-turn reasoning, rule following
+
+  Chess Notation Parser/Validator
+  - Parse algebraic notation, validate legal moves
+  - Evaluation: Check against chess engine
+  - Why cool: Complex domain with strict rules
+
+  🔬 Advanced
+
+  Code Execution Trace
+  - Execute simple programs step-by-step, show variable states
+  - Evaluation: Verify trace correctness
+  - Why cool: Meta-programming, debugging capability
+
+  Graph Algorithm Executor
+  - Given graph structure, run BFS/DFS/shortest path
+  - Evaluation: Verify algorithm output
+  - Why cool: Algorithmic reasoning
+
+  Constraint Solver
+  - Simple constraint satisfaction (sudoku cells, scheduling)
+  - Evaluation: Verify constraints satisfied
+  - Why cool: Logical reasoning under constraints
+
+  🌟 Most Inspiring IMO
+
+  1. ASCII visualization - Combines creativity with precision
+  2. Game state management - Multi-turn, rule-based reasoning
+  3. Symbolic differentiation - Shows algebraic reasoning
+  4. Data table operations - Super practical, teaches structured thinking
+  5. Constraint solver - Impressive capability, clear evaluation
+
+  Quick Wins (Easy + Impressive)
+
+  - Markdown table generator - Easy to implement, looks polished
+  - ASCII bar charts - Visual, deterministic, practical
+  - List statistics - Mean/median/mode/range in one tool

@@ -20,9 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from rdn.adamw import DistAdamW
-from rdn.common import get_dist_info
-from rdn.muon import DistMuon, Muon
+from rdn.common import get_dist_info, print0
 from rdn.utils import compute_coords
 
 
@@ -825,6 +823,63 @@ class GPT(nn.Module):
 
         return num_flops_per_token
 
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95)):
+        """
+        New unified optimizer setup using MuonAdamW/DistMuonAdamW from rdn/optim.py.
+        This combines Polar Express Muon for matrix params with AdamW for embeddings/scalars.
+
+        Uses Polar Express orthogonalization (better than Newton-Schulz), variance reduction,
+        and cautious weight decay.
+        """
+        from rdn.optim import MuonAdamW, DistMuonAdamW
+
+        model_dim = self.config.n_embd
+        ddp, rank, local_rank, world_size = get_dist_info()
+
+        # Separate out all parameters into groups
+        matrix_params = list(self.transformer.h.parameters())
+        embedding_params = list(self.transformer.wte.parameters())
+        if hasattr(self.transformer, 'wpe'):
+            embedding_params += list(self.transformer.wpe.gate.parameters()) + list(self.transformer.wpe.proj.parameters())
+        lm_head_params = list(self.lm_head.parameters())
+
+        # For MoE models, expert embeddings are part of the transformer
+        expert_params = []
+        if hasattr(self.transformer, 'expert_embeddings'):
+            expert_params = list(self.transformer.expert_embeddings.parameters())
+
+        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(expert_params)
+
+        # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
+        dmodel_lr_scale = (model_dim / 768) ** -0.5
+        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+
+        # Build param_groups with all required fields explicit
+        param_groups = [
+            # AdamW groups (embeddings, lm_head)
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+        ]
+
+        # Add expert embeddings if present (treated like embeddings)
+        if expert_params:
+            param_groups.append(
+                dict(kind='adamw', params=expert_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0)
+            )
+
+        # Muon groups (matrix params, grouped by shape for stacking)
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+
+        Factory = DistMuonAdamW if ddp else MuonAdamW
+        optimizer = Factory(param_groups)
+        for group in optimizer.param_groups:
+            group["initial_lr"] = group["lr"]
+        return optimizer
 
     def setup_optimizers(
         self,
@@ -834,44 +889,20 @@ class GPT(nn.Module):
         weight_decay=0.0,
         accumulation_steps=1,
     ):
-        model_dim = self.config.n_embd
-        ddp, rank, local_rank, world_size = get_dist_info()
-        # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
-        matrix_params = list(self.transformer.h.parameters())
-        embedding_params = list(self.transformer.wte.parameters())
-        if hasattr(self.transformer, 'wpe'):
-            embedding_params += list(self.transformer.wpe.gate.parameters()) + list(self.transformer.wpe.proj.parameters())
-
-        lm_head_params = list(self.lm_head.parameters())
-        assert len(list(self.parameters())) == len(matrix_params) + len(
-            embedding_params
-        ) + len(lm_head_params)
-        # Create the AdamW optimizer for the embedding and lm_head
-        # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
-        dmodel_lr_scale = (model_dim / 768) ** -0.5
-        if rank == 0:
-            print(
-                f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}"
-            )
-        adam_groups = [
-            dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
-            dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
-        ]
-        adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
-        adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
-        # Create the Muon optimizer for the linear layers
-        muon_kwargs = dict(
-            lr=matrix_lr, momentum=0.95, accumulation_steps=accumulation_steps
+        """
+        DEPRECATED: Legacy method for backward compatibility.
+        Returns unified optimizer in a list to maintain API compatibility.
+        Use setup_optimizer() for new code.
+        """
+        print0("WARNING: setup_optimizers() is deprecated. Use setup_optimizer() instead.")
+        optimizer = self.setup_optimizer(
+            unembedding_lr=unembedding_lr,
+            embedding_lr=embedding_lr,
+            matrix_lr=matrix_lr,
+            weight_decay=weight_decay,
         )
-        MuonFactory = DistMuon if ddp else Muon
-        muon_optimizer = MuonFactory(matrix_params, **muon_kwargs)
-        # Combine them the two optimizers into one list
-        optimizers = [adamw_optimizer, muon_optimizer]
-        for opt in optimizers:
-            for group in opt.param_groups:
-                group["initial_lr"] = group["lr"]
-        return optimizers
+        # Return as list for backward compatibility with code expecting [adamw, muon]
+        return [optimizer]
 
     def forward(self, idx, targets=None, coords=None, kv_cache=None, loss_reduction="mean"):
         """

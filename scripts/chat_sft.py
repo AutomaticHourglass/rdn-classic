@@ -143,19 +143,18 @@ train_loader = sft_data_generator(train_ds, batch_size=device_batch_size)
 build_val_loader = lambda: sft_data_generator(val_ds, batch_size=device_batch_size)
 
 # -----------------------------------------------------------------------------
-# Initialize the Optimizer
+# Initialize the Unified Optimizer (Polar Express Muon + AdamW)
 
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=unembedding_lr,
     embedding_lr=embedding_lr,
     matrix_lr=matrix_lr,
     weight_decay=weight_decay,
 )
 # Set the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * init_lr_frac
+    group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -225,13 +224,11 @@ for step in range(num_iterations):
 
     # learning rate scheduler
     lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
 
-    # step the optimizers
-    for opt in optimizers:
-        opt.step()
+    # step the optimizer
+    optimizer.step()
     model.zero_grad(set_to_none=True)
 
     # logging

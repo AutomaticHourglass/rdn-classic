@@ -273,19 +273,18 @@ print0(f"Tokens : Params ratio: {args.total_batch_size * num_iterations / num_pa
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
-# Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
+# Initialize the Unified Optimizer (Polar Express Muon + AdamW)
 adam_betas = (args.adam_beta1, args.adam_beta2)
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=args.weight_decay,
+    adam_betas=adam_betas,
 )
-adamw_optimizer, muon_optimizer = optimizers
 
 if resuming:
-    for opt, dat in zip(optimizers, optimizer_data):
-        opt.load_state_dict(dat)
+    optimizer.load_state_dict(optimizer_data[0])
     del optimizer_data  # free up the memory
 
 # -----------------------------------------------------------------------------
@@ -549,7 +548,7 @@ while True:
                 checkpoint_dir,
                 step,
                 orig_model.state_dict(),
-                [opt.state_dict() for opt in optimizers],  # optimizer states
+                [optimizer.state_dict()],  # optimizer state
                 {
                     "step": step,
                     # "val_bpb": val_bpb,  # loss at last step
@@ -602,16 +601,15 @@ while True:
                 x, y = batch
                 dataloader_state_dict = {}
             coords_x = None
-    # step the optimizers`
+    # step the optimizer
     lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
     muon_momentum = get_muon_momentum(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
-    for opt in optimizers:
-        opt.step()
+    for group in optimizer.param_groups:
+        if group.get("kind") == "muon":
+            group["momentum"] = muon_momentum
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     synchronize()
     t1 = time.time()

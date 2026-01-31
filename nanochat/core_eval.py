@@ -132,8 +132,8 @@ def batch_sequences_schema(tokenizer, prompts):
 
 def batch_sequences_lm(tokenizer, prompts):
     # In LM tasks, we have two prompts: without and with continuation
-    tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
-    tokens_without, tokens_with = tokens
+    token_lists = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
+    tokens_without, tokens_with = token_lists[0], token_lists[1]
     start_idx, end_idx = len(tokens_without), len(tokens_with)
     
     assert start_idx < end_idx, "prompt without is supposed to be a prefix of prompt with"

@@ -338,7 +338,7 @@ while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if args.eval_every >= 0 and (last_step or step % args.eval_every == 0):
+    if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
@@ -375,7 +375,7 @@ while True:
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
     # ONLY for generator-based agents (not for RDN pretraining)
-    if use_generator and master_process and (last_step or (step >= 0 and step % args.sample_every == 0)):
+    if use_generator and master_process and args.sample_every > 0 and (last_step or step % args.sample_every == 0):
         model.eval()
         engine = Engine(orig_model, tokenizer)
         total_eval = 0
@@ -487,7 +487,7 @@ while True:
                 },
             )
 
-            if step > 3 * args.sample_every and step % args.sample_every == 0:
+            if args.sample_every > 0 and step > 3 * args.sample_every and step % args.sample_every == 0:
                 delete_step = step - 3 * args.sample_every
                 try:
                     os.remove(f"{checkpoint_dir}/meta_{delete_step:06d}.json")

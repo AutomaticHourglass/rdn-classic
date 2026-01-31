@@ -30,14 +30,14 @@ run_test() {
     local test_cmd=$2
 
     echo -e "${YELLOW}Testing: $test_name${NC}"
-    if eval "$test_cmd" > "$TEST_DIR/${test_name}.log" 2>&1; then
+    if eval "$test_cmd" >> "$TEST_DIR/e2e_test.log" 2>&1; then
         echo -e "${GREEN}✓ PASS: $test_name${NC}"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo -e "${RED}✗ FAIL: $test_name${NC}"
-        echo -e "${RED}  Log: $TEST_DIR/${test_name}.log${NC}"
-        tail -20 "$TEST_DIR/${test_name}.log"
+        echo -e "${RED}  Log: $TEST_DIR/e2e_test.log${NC}"
+        tail -20 "$TEST_DIR/e2e_test.log"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
@@ -183,7 +183,7 @@ print(\"mHC model tests passed\")
 '"
 
 # ============================================================================
-# Test 4: Training Tests (Calculator Agent)
+# Test 4: Training Tests (All Agents)
 # ============================================================================
 echo -e "\n${BLUE}=== Phase 4: Training Tests ===${NC}"
 
@@ -196,10 +196,11 @@ run_test "train_calculator" "python -m scripts.base_train \
     --device_batch_size=2 \
     --total_batch_size=256 \
     --num_iterations=5 \
-    --eval_every=-1 \
+    --eval_every=5 \
     --core_metric_every=-1 \
-    --sample_every=-1 \
-    --save_every=-1 \
+    --core_metric_max_per_task=-1 \
+    --sample_every=5 \
+    --save_every=5 \
     --run=dummy"
 
 run_test "train_tictactoe" "python -m scripts.base_train \
@@ -209,12 +210,28 @@ run_test "train_tictactoe" "python -m scripts.base_train \
     --n_kv_heads=2 \
     --max_seq_len=256 \
     --device_batch_size=2 \
-    --total_batch_size=256 \
+    --total_batch_size=8192 \
     --num_iterations=5 \
     --eval_every=-1 \
     --core_metric_every=-1 \
     --sample_every=-1 \
     --save_every=-1 \
+    --run=dummy"
+
+run_test "train_rdn_with_core" "python -m scripts.base_train \
+    --agent=rdn \
+    --depth=2 \
+    --n_heads=2 \
+    --n_kv_heads=2 \
+    --max_seq_len=256 \
+    --device_batch_size=2 \
+    --total_batch_size=512 \
+    --num_iterations=5 \
+    --eval_every=5 \
+    --core_metric_every=5 \
+    --core_metric_max_per_task=32 \
+    --sample_every=5 \
+    --save_every=5 \
     --run=dummy"
 
 # ============================================================================

@@ -395,6 +395,7 @@ while True:
         # Iterate through the loader batch to extract all problems
         q = 8192 // args.max_seq_len
         all_generate = []
+        val_loader = build_val_loader()
         for pp in next(val_loader)[0].tolist()[:q]:
             s = tokenizer.decode(pp)
             all_ps = s.split('<|bos|>')[1:-1]

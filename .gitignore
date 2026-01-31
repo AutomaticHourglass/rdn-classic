@@ -52,3 +52,6 @@ tmp/
 temp/
 profile_results/
 test_runs/
+tool_use/
+
+digest.txt

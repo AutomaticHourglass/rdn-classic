@@ -17,10 +17,10 @@ import torch
 import torch.distributed as dist
 from contextlib import nullcontext
 
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
-from nanochat.checkpoint_manager import load_model
-from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.engine import Engine
+from rdn.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
+from rdn.checkpoint_manager import load_model
+from rdn.checkpoint_manager import save_checkpoint
+from rdn.engine import Engine
 from scripts.chat_eval import run_chat_eval
 
 from tasks.common import TaskMixture
@@ -268,7 +268,7 @@ if master_process:
     print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
-from nanochat.report import get_report
+from rdn.report import get_report
 get_report().log(section="Chat SFT", data=[
     user_config, # CLI args
     {

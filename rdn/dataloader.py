@@ -4,9 +4,9 @@ import torch
 import pyarrow.parquet as pq
 
 from generator.unified import generate_random_problem
-from nanochat.common import get_dist_info
-from nanochat.dataset import list_parquet_files, parquets_iter_batched
-from nanochat.tokenizer import get_tokenizer
+from rdn.common import get_dist_info
+from rdn.dataset import list_parquet_files, parquets_iter_batched
+from rdn.tokenizer import get_tokenizer
 
 from datasets import load_dataset, load_from_disk
 

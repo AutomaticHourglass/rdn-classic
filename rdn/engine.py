@@ -19,8 +19,8 @@ from contextlib import contextmanager, nullcontext
 import torch
 import torch.nn.functional as F
 
-from nanochat.checkpoint_manager import load_model
-from nanochat.common import autodetect_device_type, compute_init
+from rdn.checkpoint_manager import load_model
+from rdn.common import autodetect_device_type, compute_init
 
 
 # -----------------------------------------------------------------------------

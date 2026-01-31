@@ -16,11 +16,11 @@ import time
 import wandb
 import torch
 from contextlib import nullcontext
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
-from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.checkpoint_manager import load_model
+from rdn.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
+from rdn.tokenizer import get_token_bytes
+from rdn.checkpoint_manager import save_checkpoint
+from rdn.loss_eval import evaluate_bpb
+from rdn.checkpoint_manager import load_model
 import torch.distributed as dist
 
 from tasks.common import TaskMixture
@@ -295,7 +295,7 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
 if not dry_run:
-    from nanochat.report import get_report
+    from rdn.report import get_report
     get_report().log(section="Midtraining", data=[
         user_config, # CLI args
         { # stats about the training setup

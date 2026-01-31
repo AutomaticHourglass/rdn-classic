@@ -9,12 +9,12 @@ torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 import os
 from contextlib import nullcontext
 import torch
-from nanochat.checkpoint_manager import load_model
-from nanochat.common import compute_init, print0, compute_cleanup, autodetect_device_type
-from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.tokenizer import get_token_bytes
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.engine import Engine
+from rdn.checkpoint_manager import load_model
+from rdn.common import compute_init, print0, compute_cleanup, autodetect_device_type
+from rdn.dataloader import tokenizing_distributed_data_loader
+from rdn.tokenizer import get_token_bytes
+from rdn.loss_eval import evaluate_bpb
+from rdn.engine import Engine
 
 # Configuration
 device_batch_size = 32
@@ -66,7 +66,7 @@ if ddp_rank == 0:
         samples.append(sample_str)
 
 # Log to report
-from nanochat.report import get_report
+from rdn.report import get_report
 get_report().log(section="Base model loss", data=[
     {
         "train bpb": bpb_results["train"],

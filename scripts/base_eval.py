@@ -22,10 +22,10 @@ from contextlib import nullcontext
 
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
-from nanochat.tokenizer import HuggingFaceTokenizer
-from nanochat.checkpoint_manager import load_model
-from nanochat.core_eval import evaluate_task
+from rdn.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
+from rdn.tokenizer import HuggingFaceTokenizer
+from rdn.checkpoint_manager import load_model
+from rdn.core_eval import evaluate_task
 
 # -----------------------------------------------------------------------------
 # nanochat specific function dealing with I/O etc.
@@ -197,7 +197,7 @@ def main():
             print0(f.read())
 
     # Log to report
-    from nanochat.report import get_report
+    from rdn.report import get_report
     get_report().log(section="Base model evaluation", data=[
         {
             "Model": model_name,

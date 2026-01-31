@@ -20,10 +20,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from nanochat.adamw import DistAdamW
-from nanochat.common import get_dist_info
-from nanochat.muon import DistMuon, Muon
-from nanochat.utils import compute_coords
+from rdn.adamw import DistAdamW
+from rdn.common import get_dist_info
+from rdn.muon import DistMuon, Muon
+from rdn.utils import compute_coords
 
 
 @dataclass

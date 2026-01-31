@@ -23,9 +23,9 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
-from nanochat.checkpoint_manager import save_checkpoint, load_model
-from nanochat.engine import Engine
+from rdn.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
+from rdn.checkpoint_manager import save_checkpoint, load_model
+from rdn.engine import Engine
 from tasks.gsm8k import GSM8K
 
 # RL hyperparameters
@@ -322,7 +322,7 @@ for step in range(num_steps):
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
-from nanochat.report import get_report
+from rdn.report import get_report
 get_report().log(section="Chat RL", data=[
     user_config, # CLI args
 ])

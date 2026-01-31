@@ -1,6 +1,6 @@
 [project]
-name = "recursive_dimensional_network"
-version = "0.0.4"
+name = "rdn"
+version = "0.5.0"
 description = "the minimal full-stack recursive dimensional network, works on multiple gpus"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -13,7 +13,7 @@ from functools import lru_cache
 
 import torch
 
-from nanochat.dataset import parquets_iter_batched, base_dir
+from rdn.dataset import parquets_iter_batched, base_dir
 
 SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
@@ -449,7 +449,7 @@ class RustBPETokenizer:
 # nanochat-specific convenience functions
 
 # def get_tokenizer():
-#     from nanochat.common import get_base_dir
+#     from rdn.common import get_base_dir
 #     base_dir = get_base_dir()
 #     tokenizer_dir = os.path.join(base_dir, "tokenizer")
 #     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
@@ -492,7 +492,7 @@ def get_tokenizer(use_recursive_markers=True):
 
 def get_token_bytes(device="cpu"):
     import torch
-    from nanochat.common import get_base_dir
+    from rdn.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")

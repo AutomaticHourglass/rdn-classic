@@ -33,14 +33,14 @@ from contextlib import nullcontext
 import wandb
 import torch
 
-from nanochat.gpt import GPT, GPTConfig
-from nanochat.dataloader import tokenizing_distributed_data_loader, tokenizing_distributed_data_loader_with_state
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, \
+from rdn.gpt import GPT, GPTConfig
+from rdn.dataloader import tokenizing_distributed_data_loader, tokenizing_distributed_data_loader_with_state
+from rdn.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, \
     autodetect_device_type
-from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.engine import Engine
+from rdn.tokenizer import get_tokenizer, get_token_bytes
+from rdn.checkpoint_manager import save_checkpoint, load_checkpoint
+from rdn.loss_eval import evaluate_bpb
+from rdn.engine import Engine
 from scripts.base_eval import evaluate_model
 
 print_banner()
@@ -603,7 +603,7 @@ if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
+from rdn.report import get_report
 
 get_report().log(section="Base model training", data=[
     user_config,  # CLI args

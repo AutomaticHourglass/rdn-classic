@@ -5,7 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
-from nanochat.engine import KVCache
+from rdn.engine import KVCache
 
 def test_kv_cache_resize():
     """

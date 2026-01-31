@@ -45,9 +45,9 @@ from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 from dataclasses import dataclass
 from contextlib import nullcontext
-from nanochat.common import compute_init, autodetect_device_type
-from nanochat.checkpoint_manager import load_model
-from nanochat.engine import Engine
+from rdn.common import compute_init, autodetect_device_type
+from rdn.checkpoint_manager import load_model
+from rdn.engine import Engine
 
 # Abuse prevention limits
 MAX_MESSAGES_PER_REQUEST = 500

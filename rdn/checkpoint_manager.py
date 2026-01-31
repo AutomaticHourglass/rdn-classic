@@ -8,10 +8,10 @@ import json
 import logging
 import torch
 
-from nanochat.common import get_base_dir
-from nanochat.gpt import GPT, GPTConfig
-from nanochat.tokenizer import get_tokenizer
-from nanochat.common import setup_default_logging
+from rdn.common import get_base_dir
+from rdn.gpt import GPT, GPTConfig
+from rdn.tokenizer import get_tokenizer
+from rdn.common import setup_default_logging
 
 # Set up logging
 setup_default_logging()

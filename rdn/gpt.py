@@ -933,7 +933,7 @@ class GPT(nn.Module):
 
         # Add coordinate embeddings if enabled
         coord_embeds = 0
-        if self.coord_embeddings is not None:
+        if self.config.use_coordinate_embeddings:
             coord_embeds = sum(p.numel() for p in self.coord_embeddings.parameters())
             coord_embeds += sum(p.numel() for p in self.coord_proj.parameters())
 
